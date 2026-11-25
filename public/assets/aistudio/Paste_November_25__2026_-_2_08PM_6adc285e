@@ -1,0 +1,1990 @@
+# JARVIS — COMPLETE ZERO-TO-FULL AUTONOMOUS AI SYSTEM
+## BUILD THE ENTIRE PROJECT FROM SCRATCH
+
+You are the Principal AI Architect, Senior Full-Stack Engineer, AI Systems Engineer, Automation Engineer, Security Engineer, QA Engineer, and Product Designer.
+
+Your mission is to build JARVIS from absolute zero into a fully functional, intelligent, local-first autonomous personal AI assistant.
+
+IMPORTANT: The previous JARVIS project was deleted. There is no existing implementation to rely upon. Start from scratch. Do not assume any previous repository, modules, phases, APIs, databases, tool registries, agents, dashboards, or infrastructure exist.
+
+Build the complete application from the ground up.
+
+This is not a simple chatbot, landing page, dashboard mockup, AI wrapper, or prototype.
+
+Build a real, working AI assistant with actual intelligence, voice, memory, tools, computer control, software engineering abilities, autonomous workflows, business management capabilities, testing, recovery, security and a complete user interface.
+
+Do not create a numbered phase-based roadmap. Build the entire system using a modular architecture and continue implementing all major components until the project reaches a working, usable state.
+
+---
+
+# 1. CORE VISION
+
+JARVIS should become a personal autonomous AI operating system.
+
+It should be capable of:
+
+- Understanding natural language.
+- Speaking naturally.
+- Listening continuously when enabled.
+- Remembering conversations and important context.
+- Reasoning through complicated tasks.
+- Planning objectives.
+- Researching information.
+- Using real tools.
+- Controlling authorized applications and computers.
+- Reading and editing files.
+- Developing software.
+- Testing software.
+- Finding and repairing bugs.
+- Operating workflows.
+- Managing projects.
+- Helping run businesses.
+- Coordinating AI agents.
+- Monitoring systems.
+- Recovering from errors.
+- Learning from verified experience.
+- Working independently on long-running tasks.
+- Operating offline when possible.
+- Using the internet when authorized and available.
+- Working across desktop and mobile devices.
+
+The system must be useful in real life, not just impressive in a demonstration.
+
+Every capability must connect to a real implementation.
+
+---
+
+# 2. DEVELOPMENT RULES
+
+Follow these rules throughout development.
+
+- Build from scratch.
+- Do not assume old code exists.
+- Inspect the current directory before creating files.
+- Preserve unrelated files if the workspace is not empty.
+- Do not delete files without approval.
+- Do not create fake functionality.
+- Do not use mock data to represent live system status.
+- Do not build nonfunctional buttons.
+- Do not build placeholder APIs.
+- Do not pretend tools are installed.
+- Do not simulate successful actions.
+- Do not create a dashboard that is disconnected from the backend.
+- Use real database persistence.
+- Use actual local AI inference.
+- Use actual testing and execution.
+- Use actual device capability detection.
+- Report unavailable features honestly.
+- Keep the architecture modular and maintainable.
+- Avoid unnecessary dependencies.
+- Avoid unnecessary model calls.
+- Do not stop after scaffolding.
+- Do not stop after creating a UI.
+- Do not stop after creating APIs.
+- Implement, integrate, test and verify the complete system.
+
+If the environment has limitations, implement everything possible and clearly identify genuine blockers.
+
+---
+
+# 3. TARGET HARDWARE
+
+Primary target device:
+
+- Windows 11 desktop/laptop
+- 8 GB RAM
+- CPU-based AI inference initially
+- Optional GPU support if detected
+- Internet connection available but not required for core operations
+
+The system must be optimized for low-resource computers.
+
+Resource strategy:
+
+- Use lightweight local models.
+- Support quantized models.
+- Load models on demand.
+- Unload unused models.
+- Avoid running multiple large models simultaneously.
+- Use task queues.
+- Prioritize active user tasks.
+- Run heavy tasks sequentially.
+- Monitor RAM and CPU.
+- Pause noncritical background work under resource pressure.
+- Cache useful results.
+- Avoid unnecessary indexing.
+- Use incremental file scanning.
+
+JARVIS must not make the laptop unusable.
+
+---
+
+# 4. TECHNOLOGY ARCHITECTURE
+
+Choose a stable, practical stack and implement it fully.
+
+Recommended stack:
+
+## Desktop application
+
+- Tauri desktop shell
+- React
+- TypeScript
+- Vite
+- Modern CSS
+- Lucide icons
+
+Use native desktop capabilities where appropriate.
+
+Prefer Tauri over a heavy Electron architecture if the environment supports it.
+
+If a different technology is necessary, explain why and select the lowest-resource reliable alternative.
+
+## Backend
+
+Use a modular backend capable of:
+
+- AI inference
+- Tool execution
+- Task orchestration
+- Background services
+- Memory
+- Voice processing
+- System access
+- API management
+- Security
+- Testing
+
+Choose a backend architecture that can communicate safely with the desktop application and support future mobile clients.
+
+## Database
+
+Use SQLite initially.
+
+Implement:
+
+- Proper schema
+- Migrations
+- Indexes
+- Transactional operations
+- Backups
+- Recovery
+- Persistent tasks
+- Conversations
+- Memory
+- Tool execution logs
+- Agent state
+- Automation state
+- Settings
+
+Do not store everything in JSON files when a structured database is appropriate.
+
+## Local AI
+
+Support local inference using an appropriate engine such as Ollama or llama.cpp.
+
+Create a provider-independent AI interface so inference engines can be changed without rewriting JARVIS.
+
+Cloud AI providers may be optional integrations, but must never be required for core offline functionality.
+
+---
+
+# 5. COMPLETE PROJECT STRUCTURE
+
+Create a clean, modular architecture.
+
+Separate:
+
+- Desktop application
+- Frontend
+- Backend
+- AI engine
+- Model management
+- Conversation engine
+- Voice system
+- Memory
+- Tool registry
+- Orchestrator
+- Agent system
+- Computer control
+- Browser automation
+- File system intelligence
+- Software engineering
+- Testing engine
+- Business intelligence
+- Productivity
+- Research
+- Automation
+- Security
+- Monitoring
+- Device communication
+- Database
+- API
+- Logging
+- Configuration
+- Tests
+
+Do not place the entire application in one file.
+
+Create reusable services, interfaces, schemas, utilities and modules.
+
+Use typed interfaces and validation.
+
+---
+
+# 6. JARVIS USER INTERFACE
+
+Build a premium, modern, highly usable desktop interface.
+
+Design direction:
+
+- Premium AI operating system aesthetic
+- Clean white and light-gray base
+- Orange accent color: #FF7A00
+- Charcoal: #1F2937
+- Minimal, professional interface
+- Smooth transitions
+- Subtle animations
+- Modern typography
+- Clear hierarchy
+- Responsive layout
+- Mobile-friendly structure
+- High-quality interaction states
+- No cheap-looking visual effects
+- No excessive glowing effects
+- No clutter
+- No unnecessary cards
+
+The interface should feel like a real intelligent assistant, not an admin template.
+
+Create:
+
+### Main conversation workspace
+
+- Natural chat interface
+- Voice input
+- Text input
+- Interrupt button
+- Listening status
+- Speaking status
+- Thinking status
+- Tool execution status
+- Task progress
+- File attachments
+- Contextual actions
+
+### Sidebar
+
+- New conversation
+- Conversation history
+- Projects
+- Tasks
+- Agents
+- Memory
+- Research
+- Software Engineer
+- Business Manager
+- Automations
+- Devices
+- System health
+- Settings
+
+### System status
+
+Show real data:
+
+- AI model loaded
+- Current model
+- RAM usage
+- CPU usage
+- AI inference status
+- Voice status
+- Listening status
+- Active tasks
+- Running agents
+- Tool availability
+- Network status
+- Local/offline status
+
+All displayed data must come from actual backend state.
+
+---
+
+# 7. LOCAL AI BRAIN
+
+Build JARVIS's central intelligence layer.
+
+The AI engine must support:
+
+- Local LLM inference
+- Model selection
+- Model discovery
+- Model loading
+- Model unloading
+- Model switching
+- Model health
+- Context management
+- Prompt management
+- System instructions
+- Conversation context
+- Memory retrieval
+- Tool calling
+- Structured outputs
+- Task planning
+- Reasoning
+- Response generation
+- Error handling
+- Fallback models
+
+Use different model sizes for different tasks.
+
+Example:
+
+- Lightweight model for routine conversation and simple classification.
+- Medium model for planning, research and normal coding.
+- Stronger model for complex architecture, difficult debugging and advanced reasoning, when hardware permits.
+
+Detect model capabilities instead of assuming them.
+
+Do not load multiple heavy models unnecessarily.
+
+When no model is available:
+
+- Detect the missing engine.
+- Explain the problem.
+- Provide installation guidance.
+- Offer safe automated setup where permitted.
+- Verify installation.
+- Never pretend the AI is operational without inference.
+
+---
+
+# 8. NATURAL VOICE ASSISTANT
+
+Voice must be a core feature, not an optional decoration.
+
+Implement:
+
+- Wake word: JARVIS
+- Push-to-talk
+- Continuous listening mode
+- Speech-to-text
+- Text-to-speech
+- Voice activity detection
+- Silence detection
+- Noise handling
+- Hindi recognition
+- English recognition
+- Hinglish recognition
+- Language switching
+- Interruptible speech
+- Conversation follow-up
+- Hands-free mode
+- Microphone controls
+- Speaker controls
+- Speech speed
+- Voice selection
+- Listening indicator
+- Audio device selection
+- Error recovery
+
+Recommended local voice stack:
+
+- Whisper.cpp or faster-whisper for speech recognition, depending on system compatibility.
+- Piper or another reliable local TTS engine.
+- Local wake-word detection.
+- Audio capture using a reliable native library.
+
+Optimize for 8 GB RAM.
+
+Do not require cloud APIs for voice.
+
+JARVIS should be able to hear a command, understand it, execute it, and verbally report the result.
+
+Example:
+
+User: “Jarvis, mera laptop slow kyu chal raha hai?”
+
+JARVIS:
+
+1. Understand the request.
+2. Inspect CPU, RAM, processes and disk.
+3. Identify likely causes.
+4. Explain findings in Hinglish.
+5. Offer safe fixes.
+6. Execute permitted fixes after approval if necessary.
+7. Verify the system after the action.
+
+---
+
+# 9. CONVERSATION INTELLIGENCE
+
+Implement a real conversational engine.
+
+Support:
+
+- Natural conversation
+- Contextual responses
+- Follow-up questions
+- Multi-turn context
+- Hindi
+- English
+- Hinglish
+- Tone adaptation
+- Short and detailed answers
+- Interruption
+- Conversation summarization
+- Context recovery
+- Task awareness
+- Intent detection
+
+JARVIS must distinguish between:
+
+- Conversation
+- Questions
+- Commands
+- Tasks
+- Research
+- Coding
+- Troubleshooting
+- Business actions
+- Personal reminders
+
+Do not turn every conversation into a task.
+
+Do not ask the user to repeat information already available in relevant context.
+
+---
+
+# 10. PERSISTENT MEMORY
+
+Build a real memory system.
+
+Memory should survive application restarts.
+
+Categories:
+
+- User preferences
+- User instructions
+- Projects
+- Goals
+- Conversations
+- Decisions
+- Tasks
+- Important facts
+- Technical knowledge
+- Business knowledge
+- Corrections
+- Lessons
+- Successful workflows
+- Failed workflows
+
+Implement:
+
+- SQLite persistence
+- Semantic search
+- Keyword search
+- Retrieval ranking
+- Deduplication
+- Context-aware retrieval
+- Memory summaries
+- Memory correction
+- Memory deletion
+- Memory expiration
+- Memory inspection
+- Memory export
+- Backup and recovery
+- Contradiction detection
+
+Memory should not blindly save every sentence.
+
+Extract useful information and store it with source, time and context.
+
+Do not store credentials or secrets as normal memory.
+
+---
+
+# 11. AUTONOMOUS TASK ORCHESTRATOR
+
+Build a real autonomous execution engine.
+
+JARVIS must be capable of receiving a goal and executing multiple steps.
+
+Example:
+
+“Jarvis, meri website audit karke jo critical bugs hain fix kar aur mujhe report dena.”
+
+Execution:
+
+1. Understand objective.
+2. Identify project.
+3. Inspect files.
+4. Analyze architecture.
+5. Create plan.
+6. Identify risks.
+7. Create checkpoint.
+8. Execute.
+9. Test.
+10. Repair failures.
+11. Run regression checks.
+12. Verify results.
+13. Report.
+
+Support:
+
+- Multi-step tasks
+- Background tasks
+- Task queues
+- Priority
+- Dependencies
+- Checkpoints
+- Pause
+- Resume
+- Cancel
+- Retries
+- Recovery
+- Progress
+- Logs
+- Notifications
+
+Use deterministic code for deterministic tasks.
+
+Use AI for reasoning.
+
+Do not unnecessarily ask the model to perform actions that can be handled by reliable code.
+
+---
+
+# 12. UNIVERSAL TOOL REGISTRY
+
+Build a dynamic registry of actual JARVIS tools.
+
+Every tool must have:
+
+- Tool name
+- Unique identifier
+- Description
+- Schema
+- Validation
+- Permission
+- Risk level
+- Timeout
+- Cancellation
+- Output
+- Logging
+- Error handling
+- Verification
+
+The AI should be able to discover available tools at runtime.
+
+Implement tools for:
+
+- File operations
+- System diagnostics
+- Applications
+- Browser
+- Terminal
+- Code
+- Testing
+- Database
+- Research
+- Tasks
+- Calendar
+- Reminders
+- Projects
+- Business workflows
+- Notifications
+
+Never allow arbitrary uncontrolled execution.
+
+The model must not invent tools.
+
+---
+
+# 13. COMPUTER CONTROL
+
+Build real authorized desktop control.
+
+On Windows 11, support capabilities where available:
+
+- Application launch
+- Application close
+- Window detection
+- Window switching
+- Mouse
+- Keyboard
+- Clipboard
+- Screenshots
+- Screen inspection
+- File management
+- Process inspection
+- System settings
+- Application navigation
+- Troubleshooting
+
+Use the appropriate native Windows APIs or reliable automation libraries.
+
+Implement capability detection.
+
+If permission is unavailable, explain why.
+
+Do not claim actions succeeded without verifying them.
+
+High-risk system changes require approval.
+
+---
+
+# 14. FILE AND DOCUMENT INTELLIGENCE
+
+JARVIS should be able to work with authorized files.
+
+Implement:
+
+- Search
+- Read
+- Create
+- Edit
+- Rename
+- Move
+- Copy
+- Organize
+- Compare
+- Backup
+- Summarize
+- Extract information
+- Index
+- Deduplicate
+
+Support:
+
+- PDF
+- DOCX
+- XLSX
+- CSV
+- PPTX
+- TXT
+- Markdown
+- JSON
+- XML
+- YAML
+- HTML
+- Code
+- SQL
+
+Use document parsing and extraction tools appropriate to each format.
+
+Maintain file permissions and workspace confinement.
+
+Never overwrite original files without the appropriate protection.
+
+---
+
+# 15. BROWSER AGENT
+
+Build an intelligent browser automation agent.
+
+Support:
+
+- Browser launch
+- Navigation
+- Search
+- Website inspection
+- DOM analysis
+- Link extraction
+- Form filling
+- Clicking
+- Scrolling
+- Page reading
+- Downloads
+- Uploads where authorized
+- Screenshots
+- Tab management
+- Cookies/session handling within approved boundaries
+- Browser error detection
+- Web research
+
+Use a reliable browser automation engine.
+
+Implement:
+
+- SSRF protection
+- URL validation
+- Download validation
+- Timeouts
+- Retry limits
+- CAPTCHA detection
+- MFA detection
+- Secure credential handling
+
+JARVIS must stop and request owner assistance for CAPTCHA or MFA challenges.
+
+Do not bypass security mechanisms.
+
+---
+
+# 16. UNIVERSAL SOFTWARE ENGINEER
+
+JARVIS must be able to develop software in any language for which the necessary capabilities and tools are available.
+
+Support projects including:
+
+- JavaScript
+- TypeScript
+- Python
+- HTML
+- CSS
+- React
+- Next.js
+- Vue
+- Angular
+- Svelte
+- Node.js
+- Java
+- Kotlin
+- C
+- C++
+- C#
+- Go
+- Rust
+- PHP
+- Laravel
+- Ruby
+- SQL
+- Swift
+- Dart
+- Flutter
+- Android
+- Bash
+- PowerShell
+- Docker
+- Nginx
+- YAML
+- Infrastructure code
+- APIs
+- Embedded projects
+
+### Project analysis
+
+Detect:
+
+- Project type
+- Language
+- Framework
+- Dependencies
+- Package manager
+- Entry points
+- Architecture
+- Database
+- APIs
+- Configuration
+- Build process
+- Test process
+- Git state
+
+### Development capabilities
+
+- Plan features
+- Write code
+- Edit code
+- Create files
+- Modify multiple files
+- Refactor
+- Optimize
+- Build APIs
+- Create database schemas
+- Create migrations
+- Implement business logic
+- Fix UI
+- Implement responsive design
+- Integrate services
+- Write tests
+- Review code
+- Generate documentation
+
+Before editing:
+
+- Inspect relevant code.
+- Understand dependencies.
+- Identify constraints.
+- Create a plan.
+- Check existing changes.
+- Create backups/checkpoints.
+
+After editing:
+
+- Run syntax checks.
+- Run type checks.
+- Run tests.
+- Run builds.
+- Review the diff.
+- Verify behavior.
+
+Do not blindly rewrite projects.
+
+---
+
+# 17. BUG HUNTER AND AUTO-REPAIR
+
+Implement autonomous bug discovery.
+
+Detect:
+
+- Syntax errors
+- Runtime errors
+- Logic bugs
+- Type issues
+- Null issues
+- Broken imports
+- Broken dependencies
+- API failures
+- Database issues
+- Migration problems
+- UI defects
+- Async problems
+- Security vulnerabilities
+- Performance bottlenecks
+- Memory leaks
+- Incorrect configurations
+- Incomplete code
+
+Repair workflow:
+
+DISCOVER
+→ CLASSIFY
+→ REPRODUCE
+→ ANALYZE
+→ ROOT CAUSE
+→ PLAN
+→ CHECKPOINT
+→ FIX
+→ TEST
+→ REGRESSION
+→ REVIEW
+→ VERIFY
+→ REPORT
+
+Never report a speculative bug as confirmed.
+
+Never mark a fix verified without actual verification.
+
+Use bounded repair loops.
+
+Preserve unrelated code.
+
+Rollback failed patches safely.
+
+---
+
+# 18. TESTING LAB AND ENVIRONMENT BUILDER
+
+Build a testing system capable of testing real applications.
+
+Detect:
+
+- Compilers
+- Runtimes
+- Package managers
+- Test frameworks
+- Browser engines
+- Databases
+- Build tools
+
+Support:
+
+- Syntax tests
+- Type checking
+- Lint
+- Compilation
+- Unit tests
+- Integration tests
+- API tests
+- Database tests
+- UI tests
+- Browser tests
+- End-to-end tests
+- Security tests
+- Regression tests
+
+Generate meaningful tests based on actual code.
+
+Test:
+
+- Valid inputs
+- Invalid inputs
+- Empty values
+- Boundary conditions
+- Permissions
+- Error handling
+- Database integrity
+- Network failures
+- Async behavior
+- Timeouts
+- Cancellation
+
+Create isolated environments where possible.
+
+If a required tool is missing:
+
+- Detect it.
+- Identify a compatible version.
+- Prepare a safe installation.
+- Request permission where required.
+- Verify the installation.
+
+Do not fake test results.
+
+---
+
+# 19. SELF-REPAIR ENGINE
+
+JARVIS must repair problems in its own software and authorized projects.
+
+Support:
+
+- Failed task recovery
+- Broken API repair
+- Failed test repair
+- Build repair
+- Configuration repair
+- Dependency repair
+- Database error repair
+- Model failure recovery
+- Voice subsystem recovery
+- Tool failure recovery
+- UI failure detection
+
+Never modify core security or permission mechanisms to bypass a problem.
+
+Self-modification must be checkpointed, reviewed, tested and reversible.
+
+JARVIS must not corrupt its own source or database.
+
+---
+
+# 20. MULTI-AGENT INTELLIGENCE
+
+Build an internal multi-agent framework.
+
+Agents:
+
+### Planner
+Understands objectives and creates plans.
+
+### Researcher
+Searches, investigates and gathers evidence.
+
+### Architect
+Designs technical solutions.
+
+### Developer
+Implements features.
+
+### Bug Hunter
+Finds defects.
+
+### QA Engineer
+Tests functionality.
+
+### Security Reviewer
+Reviews risks.
+
+### Performance Engineer
+Optimizes resource usage.
+
+### Business Analyst
+Analyzes business data and opportunities.
+
+### Project Manager
+Tracks deadlines, tasks and progress.
+
+### Operations Agent
+Monitors systems and workflows.
+
+### Personal Assistant
+Manages personal tasks, reminders and organization.
+
+### Independent Reviewer
+Critically reviews completed work.
+
+Agents must have separate roles, context, tools and permissions.
+
+They should communicate through structured outputs.
+
+The orchestrator decides which agents are needed.
+
+Do not use all agents for every task.
+
+On low-memory hardware, run agents sequentially or use lightweight models.
+
+---
+
+# 21. AUTONOMOUS BUSINESS MANAGER
+
+JARVIS should be capable of assisting in managing real business operations.
+
+Modules:
+
+- Sales
+- Marketing
+- Lead generation
+- CRM
+- Customer support
+- Project management
+- HR
+- Recruitment
+- Finance analysis
+- Operations
+- Procurement
+- Product development
+- Research
+- IT
+- Reporting
+- Administration
+
+### Sales
+
+- Lead analysis
+- Lead prioritization
+- Follow-ups
+- Proposal generation
+- Sales pipeline
+- Customer communication drafts
+- Demo preparation
+- Conversion analysis
+
+### Marketing
+
+- Market research
+- Competitor analysis
+- Content generation
+- SEO
+- Campaign planning
+- Ad analysis
+- Performance reporting
+- Opportunity discovery
+
+### Projects
+
+- Task tracking
+- Deadline monitoring
+- Team coordination
+- Progress reporting
+- Risk detection
+- Bottleneck identification
+
+### Finance
+
+- Expense analysis
+- Revenue tracking
+- Budget planning
+- Cash flow analysis
+- Invoice organization
+- Financial reports
+
+Do not invent financial information.
+
+Do not make unauthorized transactions.
+
+### HR
+
+- Recruitment assistance
+- Resume analysis
+- Interview scheduling
+- Candidate tracking
+- Onboarding workflows
+- Team task coordination
+
+Do not autonomously make final employment decisions.
+
+### Operations
+
+- Process monitoring
+- Workflow automation
+- Cost analysis
+- Operational reports
+- Error detection
+- Improvement recommendations
+
+---
+
+# 22. OWNER ABSENCE MODE
+
+Implement an autonomous mode for when the owner is unavailable.
+
+When explicitly enabled, JARVIS may continue approved tasks.
+
+Examples:
+
+- Monitor projects.
+- Monitor authorized systems.
+- Research.
+- Prepare proposals.
+- Draft emails.
+- Organize CRM.
+- Generate reports.
+- Track leads.
+- Prepare content.
+- Review project status.
+- Run tests.
+- Fix low-risk verified bugs.
+- Perform preapproved repetitive operations.
+- Report important issues.
+
+Implement:
+
+- Permissions
+- Spending limits
+- Allowed actions
+- Restricted actions
+- Time limits
+- Activity logs
+- Notifications
+- Approval gates
+- Emergency stop
+
+Do not independently perform unauthorized payments, contracts, destructive operations, sensitive communications or irreversible actions.
+
+---
+
+# 23. RESEARCH ENGINE
+
+Build an intelligent research agent.
+
+When internet access is available and authorized:
+
+- Search multiple sources.
+- Gather evidence.
+- Compare information.
+- Identify contradictions.
+- Check source reliability.
+- Track publication dates.
+- Summarize.
+- Generate reports.
+- Store useful knowledge.
+- Cite sources.
+- Identify opportunities.
+
+When offline:
+
+- Search local documents.
+- Search local knowledge.
+- Analyze previously stored research.
+- Explain the internet limitation.
+
+Never invent research or citations.
+
+---
+
+# 24. PERSONAL PRODUCTIVITY
+
+Build a personal assistant system.
+
+Support:
+
+- Tasks
+- Calendar
+- Reminders
+- Notes
+- Goals
+- Projects
+- Deadlines
+- Routines
+- Scheduling
+- Planning
+- Notifications
+
+Intelligently identify:
+
+- Overdue tasks
+- Conflicts
+- Important deadlines
+- Forgotten follow-ups
+- Workload
+- Priorities
+
+Do not flood the owner with notifications.
+
+Support configurable notification priorities and quiet hours.
+
+---
+
+# 25. KNOWLEDGE BRAIN
+
+Create a searchable knowledge system connecting:
+
+- Conversations
+- Memory
+- Projects
+- Files
+- Code
+- Research
+- Business
+- Tasks
+- Bugs
+- Solutions
+- Decisions
+- Experiences
+
+Use appropriate retrieval methods.
+
+When solving a problem, retrieve relevant previous experience.
+
+Verify old solutions before reusing them.
+
+Prevent duplicate knowledge.
+
+Allow the owner to inspect and modify knowledge.
+
+---
+
+# 26. AUTOMATION ENGINE
+
+Build a real automation engine.
+
+Support:
+
+- Scheduled triggers
+- Event triggers
+- Conditions
+- Actions
+- Multi-step workflows
+- Tool integration
+- Approval steps
+- Notifications
+- Retries
+- Timeouts
+- Logs
+- Cancellation
+- Recovery
+
+Examples:
+
+- Daily system health report.
+- Monitor selected projects.
+- Notify when tests fail.
+- Organize approved folders.
+- Prepare daily business report.
+- Check follow-up deadlines.
+- Monitor authorized APIs.
+- Run scheduled research.
+
+All automation must be visible, permission-controlled and stoppable.
+
+Prevent infinite loops and duplicate execution.
+
+---
+
+# 27. CONTINUOUS PROJECT GUARDIAN
+
+Build a persistent project monitoring system.
+
+Monitor selected projects for:
+
+- Build failures
+- Test failures
+- Broken imports
+- Git changes
+- Dependency changes
+- Runtime errors
+- API errors
+- Database health
+- Performance problems
+- Security problems
+- Disk usage
+- Project health
+
+Use incremental monitoring rather than constant full scans.
+
+When a problem occurs:
+
+- Investigate.
+- Verify.
+- Reproduce if possible.
+- Assess risk.
+- Repair when authorized.
+- Run tests.
+- Notify the owner.
+- Record evidence.
+
+Never modify projects that have not been authorized.
+
+---
+
+# 28. DECISION ENGINE
+
+JARVIS should be able to evaluate complex decisions.
+
+For each decision:
+
+- Understand the objective.
+- Gather information.
+- Identify constraints.
+- Generate alternatives.
+- Compare cost.
+- Compare time.
+- Compare risks.
+- Compare benefits.
+- Evaluate reversibility.
+- Identify unknowns.
+- Recommend a solution.
+- Explain the reasoning summary.
+- Identify a fallback.
+
+Use actual calculations for numerical decisions.
+
+Do not treat model confidence as proof.
+
+---
+
+# 29. DIGITAL TWIN AND SIMULATION
+
+Create an internal model of authorized systems, projects, workflows and business operations.
+
+Use it to evaluate hypothetical outcomes.
+
+Examples:
+
+- Simulate software changes.
+- Evaluate workflow changes.
+- Estimate resource consumption.
+- Analyze project delays.
+- Compare marketing strategies.
+- Evaluate business scenarios.
+- Identify failure risks.
+
+Clearly label simulations as predictions, not actual results.
+
+---
+
+# 30. FAILURE RECOVERY
+
+Build reliable recovery.
+
+Handle:
+
+- AI crashes
+- Model failures
+- Database failures
+- Application crashes
+- Tool failures
+- Network loss
+- Device disconnections
+- Memory pressure
+- Failed tasks
+- Failed tests
+- Interrupted workflows
+- Failed repairs
+
+Implement:
+
+- Checkpoints
+- Retry limits
+- Backoff
+- Fallback
+- Recovery
+- Cancellation
+- Rollback
+- Logging
+- State validation
+- Cleanup
+
+Do not restart failed processes endlessly.
+
+---
+
+# 31. SECURITY AND PRIVACY
+
+Security must be built into the architecture.
+
+Implement:
+
+- Permission system
+- Tool approval
+- Risk classification
+- Secure storage
+- Secret redaction
+- Input validation
+- Authentication
+- Workspace confinement
+- Path traversal protection
+- Process restrictions
+- Timeouts
+- Cancellation
+- Audit logs
+- Backup
+- Recovery
+- Encrypted communication
+
+Risk levels:
+
+LOW:
+Read-only analysis and safe research.
+
+MEDIUM:
+Reversible edits and controlled workspace operations.
+
+HIGH:
+System changes, installations, external communications, financial actions and sensitive operations.
+
+CRITICAL:
+Destructive, irreversible or security-sensitive actions.
+
+Require approvals appropriate to the risk.
+
+Do not allow the AI to bypass permissions.
+
+The owner must retain full control.
+
+---
+
+# 32. MULTI-DEVICE ARCHITECTURE
+
+Design JARVIS to expand beyond desktop.
+
+Support future clients:
+
+- Windows desktop
+- Android
+- Other desktop systems
+- Local network devices
+
+Implement an authenticated device architecture.
+
+Capabilities:
+
+- Pairing
+- Device identity
+- Encrypted communication
+- Task handoff
+- Shared task state
+- Notifications
+- Capability discovery
+- Device status
+- Local network communication
+
+Do not expose local services publicly by default.
+
+---
+
+# 33. ANDROID COMPANION
+
+Create an Android companion application when the architecture permits.
+
+Support:
+
+- Voice
+- Chat
+- Notifications
+- Tasks
+- Reminders
+- Device connection
+- File access with permission
+- App launching where supported
+- Device status
+- Task handoff
+- Offline capabilities
+
+Respect Android permission requirements and background restrictions.
+
+Do not claim unrestricted mobile control.
+
+---
+
+# 34. SYSTEM MONITORING
+
+Build a real system health service.
+
+Monitor:
+
+- CPU
+- RAM
+- Disk
+- Temperature where supported
+- Processes
+- Application health
+- Model health
+- Database health
+- Network
+- Task execution
+- Background activity
+
+Identify problems.
+
+Provide recommendations.
+
+Perform safe fixes only when permitted.
+
+---
+
+# 35. SELF-LEARNING AND IMPROVEMENT
+
+JARVIS must learn from verified experience.
+
+Capture:
+
+- User corrections
+- Successful workflows
+- Failed workflows
+- Technical discoveries
+- Bug fixes
+- Tool reliability
+- Project-specific knowledge
+- Repeated tasks
+- Optimization opportunities
+
+Before applying learned knowledge, verify that it is relevant.
+
+Memory must be editable and reversible.
+
+Do not autonomously rewrite safety rules.
+
+---
+
+# 36. FUTURE CAPABILITY DISCOVERY
+
+Do not restrict JARVIS to this prompt.
+
+Whenever JARVIS discovers a useful capability it lacks:
+
+1. Identify the limitation.
+2. Search its existing capabilities.
+3. Determine if a solution exists.
+4. Research potential solutions when permitted.
+5. Evaluate hardware.
+6. Evaluate risks.
+7. Identify dependencies.
+8. Choose the best implementation.
+9. Implement it.
+10. Test it.
+11. Integrate it.
+12. Update the capability registry.
+
+Possible future capabilities:
+
+- Advanced vision
+- Voice intelligence
+- Local robotics
+- Smart home
+- Advanced coding
+- Autonomous research
+- Cybersecurity defense
+- Predictive analytics
+- Knowledge graphs
+- Better memory
+- Visual computer control
+- Data intelligence
+- Scientific computing
+- New AI models
+- Intelligent workflow optimization
+
+These are examples only.
+
+Do not add useless features just to increase the feature count.
+
+---
+
+# 37. RESOURCE MANAGEMENT
+
+The system must continuously adapt to available hardware.
+
+Monitor:
+
+- CPU
+- RAM
+- GPU
+- Disk
+- Active models
+- Running processes
+- Background jobs
+
+Prioritize:
+
+1. Active user interaction.
+2. Important tasks.
+3. Background missions.
+4. Optional research.
+
+When resources are low:
+
+- Pause noncritical agents.
+- Reduce inference concurrency.
+- Unload unused models.
+- Defer heavy tests.
+- Use lightweight models.
+- Stop unnecessary background operations.
+
+Never make the system unstable.
+
+---
+
+# 38. DATABASE AND BACKUP
+
+Build reliable persistent storage.
+
+Database must store:
+
+- Conversations
+- Messages
+- Memory
+- Tasks
+- Projects
+- Agents
+- Tool registry
+- Tool executions
+- Automation
+- Schedules
+- Research
+- Test history
+- Bug records
+- Settings
+- Permissions
+- Device records
+- Audit history
+
+Implement:
+
+- Database migrations
+- Indexes
+- Transactions
+- Backups
+- Restore
+- Integrity checks
+- Error recovery
+
+Never delete or reset the database to solve a migration problem.
+
+---
+
+# 39. COMPLETE TESTING
+
+Create comprehensive tests for the entire system.
+
+Test:
+
+- Backend
+- Frontend
+- Database
+- AI integration
+- Model loading
+- Memory
+- Voice
+- Tools
+- Orchestrator
+- Task recovery
+- File access
+- Browser
+- Computer control
+- Security
+- Permissions
+- Automation
+- Agents
+- Business modules
+- Testing engine
+
+Use real tests.
+
+Mock only external dependencies that genuinely require mocking, and label those tests appropriately.
+
+Run:
+
+- Unit tests
+- Integration tests
+- API tests
+- Database tests
+- UI tests
+- E2E tests
+- Regression tests
+- Security tests
+
+Do not weaken tests to make builds pass.
+
+---
+
+# 40. INSTALLATION AND FIRST-RUN EXPERIENCE
+
+Build a complete installation and setup experience.
+
+On first launch:
+
+1. Detect operating system.
+2. Detect CPU.
+3. Detect RAM.
+4. Detect GPU.
+5. Detect disk space.
+6. Detect microphone.
+7. Detect speakers.
+8. Detect available AI engines.
+9. Detect available models.
+10. Detect permissions.
+11. Detect missing dependencies.
+12. Recommend an appropriate setup.
+
+Provide a setup wizard that can:
+
+- Install required dependencies.
+- Configure the AI engine.
+- Select a local model.
+- Configure microphone.
+- Configure speaker.
+- Set wake word.
+- Set language.
+- Configure memory.
+- Set security permissions.
+- Configure background mode.
+
+Make setup beginner-friendly.
+
+Do not force the user to manually edit config files for ordinary setup.
+
+---
+
+# 41. REAL FUNCTIONALITY REQUIREMENT
+
+Every feature must be real.
+
+Examples:
+
+A voice button must actually capture audio.
+
+A listening indicator must reflect actual microphone state.
+
+A model indicator must reflect an actual loaded model.
+
+A RAM display must reflect real hardware telemetry.
+
+A task progress indicator must reflect actual execution.
+
+A file operation must modify the real file.
+
+A computer-control command must perform the real action.
+
+A bug report must be based on actual evidence.
+
+A test status must reflect actual test execution.
+
+A business report must use actual data.
+
+A memory entry must be persistently stored.
+
+A notification must be actually delivered.
+
+A tool must execute through its actual implementation.
+
+If a feature cannot work because a dependency is missing, show its real blocked state.
+
+---
+
+# 42. BUILD EXECUTION ORDER
+
+Build the application in a dependency-aware order, without stopping after each stage.
+
+First:
+
+- Inspect workspace.
+- Initialize the project.
+- Establish architecture.
+- Establish database.
+- Establish security.
+- Establish logging.
+- Establish backend.
+- Establish desktop shell.
+
+Then build and integrate:
+
+- UI
+- AI engine
+- Conversation
+- Model management
+- Memory
+- Voice
+- Tool registry
+- Orchestrator
+- Task engine
+- File intelligence
+- Browser
+- Computer control
+- System diagnostics
+- Software engineer
+- Bug Hunter
+- Testing lab
+- Agents
+- Business manager
+- Personal productivity
+- Research
+- Automation
+- Monitoring
+- Device architecture
+- Android companion foundations
+- Recovery
+- Security
+
+This list is a dependency order, not permission to leave later capabilities as placeholders.
+
+Continue implementation until the application is functional across its supported capabilities.
+
+---
+
+# 43. BUILD, RUN AND DEBUG
+
+After implementation:
+
+- Install dependencies.
+- Run database migrations.
+- Start backend.
+- Start desktop application.
+- Check logs.
+- Fix startup failures.
+- Fix runtime failures.
+- Run tests.
+- Check frontend.
+- Check APIs.
+- Check voice dependencies.
+- Check local AI inference.
+- Verify memory persistence.
+- Verify task execution.
+- Verify recovery.
+- Verify system diagnostics.
+- Verify security.
+
+Use actual terminal execution.
+
+Do not simply provide installation commands to the user when the coding environment can execute them safely.
+
+Do not report successful startup unless it actually starts.
+
+---
+
+# 44. DEFINITION OF DONE
+
+The project is not complete merely because a codebase exists.
+
+The initial complete build must have:
+
+- [ ] Working desktop application.
+- [ ] Working backend.
+- [ ] Persistent SQLite database.
+- [ ] Database migrations.
+- [ ] Local AI integration.
+- [ ] Model management.
+- [ ] Real chat.
+- [ ] Contextual conversation.
+- [ ] Persistent memory.
+- [ ] Voice recognition integration.
+- [ ] Voice synthesis integration.
+- [ ] Interruptible voice where supported.
+- [ ] Wake-word architecture.
+- [ ] Tool registry.
+- [ ] Task orchestrator.
+- [ ] Background task support.
+- [ ] Checkpointing.
+- [ ] Recovery.
+- [ ] Cancellation.
+- [ ] File intelligence.
+- [ ] Browser agent.
+- [ ] Authorized computer control.
+- [ ] System diagnostics.
+- [ ] Universal software engineer.
+- [ ] Bug hunter.
+- [ ] Code repair.
+- [ ] Testing lab.
+- [ ] Agent framework.
+- [ ] Research system.
+- [ ] Business intelligence foundations.
+- [ ] Personal productivity.
+- [ ] Automation engine.
+- [ ] Project guardian.
+- [ ] Resource management.
+- [ ] Security and permissions.
+- [ ] Audit logs.
+- [ ] Backup and recovery.
+- [ ] Functional UI.
+- [ ] Working installation process.
+- [ ] Actual tests.
+- [ ] Successful build.
+- [ ] Runtime verification.
+
+If any item is blocked, implement all possible parts and report the exact blocker.
+
+---
+
+# 45. FINAL REPORT
+
+When the implementation work is finished, provide a report with:
+
+1. Overall architecture.
+2. Technology stack.
+3. Project structure.
+4. Implemented capabilities.
+5. Database architecture.
+6. AI models and engines.
+7. Voice status.
+8. Memory status.
+9. Tool registry.
+10. Desktop capabilities.
+11. Software engineering capabilities.
+12. Testing and bug repair.
+13. Agent system.
+14. Business capabilities.
+15. Security.
+16. Resource consumption.
+17. Tests executed.
+18. Build results.
+19. Runtime results.
+20. Missing dependencies.
+21. Blocked capabilities.
+22. Remaining work.
+23. How to start JARVIS.
+24. How to use JARVIS.
+
+Use truthful statuses:
+
+- VERIFIED
+- IMPLEMENTED
+- PARTIALLY IMPLEMENTED
+- NOT TESTED
+- BLOCKED
+- FAILED
+
+Do not claim complete functionality without evidence.
+
+---
+
+# 46. START NOW
+
+Start from absolute zero.
+
+Do not assume an old JARVIS exists.
+
+Do not build a small demo.
+
+Do not build a simple chatbot.
+
+Do not create a static dashboard.
+
+Do not stop at the architecture plan.
+
+Inspect the available environment, create the complete project structure, implement the real backend, implement the desktop UI, integrate local AI, voice, memory, tools, orchestration, computer control, autonomous coding, testing, business intelligence, automation and security.
+
+Make intelligent engineering decisions independently.
+
+Use the most reliable architecture for the target hardware.
+
+Build the application incrementally but keep progressing toward the complete system.
+
+Run the actual application.
+
+Fix errors.
+
+Test real capabilities.
+
+Preserve user data.
+
+Report truthfully.
+
+ULTIMATE GOAL:
+
+Create JARVIS as a powerful personal AI companion and autonomous operating intelligence—capable of listening, speaking, understanding, remembering, reasoning, researching, coding, testing, repairing, controlling authorized software and devices, managing tasks, coordinating agents, operating business workflows, anticipating problems, recovering from failures and continuously becoming more capable.
+
+Build the real system.
+
+Start now. Do not stop at planning.

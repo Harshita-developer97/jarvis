@@ -1,0 +1,6 @@
+{
+  "name": "JARVIS — Autonomous AI Operating System",
+  "description": "Local-first autonomous personal AI operating system with persistent SQLite memory, voice intelligence, tool orchestration, software engineering, and real-time system diagnostics.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
