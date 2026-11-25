@@ -1,7 +1,8 @@
 import express from 'express';
 import http from 'node:http';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { getSavedAISettings, saveAISettings } from '../server/ai/engine.js';
+import { getSavedAISettings, runAIInference, saveAISettings } from '../server/ai/engine.js';
+import { config } from '../server/config/index.js';
 import { getDb } from '../server/database/db.js';
 import { createApiRouter } from '../server/routes/api.js';
 import { initializeToolRegistry } from '../server/tools/registry.js';
@@ -11,6 +12,9 @@ describe('JARVIS Ollama + qwen2.5:3b End-to-End Pipeline (Loopback Verification)
   let ollamaUrl = '';
   let apiServer: http.Server;
   let apiBaseUrl = '';
+  let simulatedDelayMs = 0;
+  let dropNextChatConnection = false;
+  let simulateColdStartUnloaded = false;
   const createdConversationIds: string[] = [];
   const capturedPayloads: Array<{ model: string; messages: any[]; options: any; keep_alive: string }> = [];
 
@@ -34,7 +38,11 @@ describe('JARVIS Ollama + qwen2.5:3b End-to-End Pipeline (Loopback Verification)
       }
       if (req.method === 'GET' && req.url === '/api/ps') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ models: [{ name: 'qwen2.5:3b' }] }));
+        res.end(
+          JSON.stringify({
+            models: simulateColdStartUnloaded ? [] : [{ name: 'qwen2.5:3b' }],
+          })
+        );
         return;
       }
       if (req.method === 'POST' && req.url === '/api/chat') {
@@ -43,23 +51,36 @@ describe('JARVIS Ollama + qwen2.5:3b End-to-End Pipeline (Loopback Verification)
           raw += chunk;
         });
         req.on('end', () => {
+          if (dropNextChatConnection) {
+            dropNextChatConnection = false;
+            req.socket.destroy();
+            return;
+          }
           const parsed = JSON.parse(raw || '{}');
           capturedPayloads.push(parsed);
           const lastUser = [...(parsed.messages || [])].reverse().find((m: any) => m.role === 'user');
           const turnCount = (parsed.messages || []).filter((m: any) => m.role === 'user').length;
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(
-            JSON.stringify({
-              model: parsed.model,
-              message: {
-                role: 'assistant',
-                content: `qwen2.5:3b verified reply (turn ${turnCount}): ${String(lastUser?.content || '').slice(0, 60)}`,
-              },
-              done: true,
-              eval_count: 18,
-              prompt_eval_count: 140,
-            })
-          );
+          const respond = () => {
+            if (res.writableEnded || res.destroyed) return;
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(
+              JSON.stringify({
+                model: parsed.model,
+                message: {
+                  role: 'assistant',
+                  content: `qwen2.5:3b verified reply (turn ${turnCount}): ${String(lastUser?.content || '').slice(0, 60)}`,
+                },
+                done: true,
+                eval_count: 18,
+                prompt_eval_count: 140,
+              })
+            );
+          };
+          if (simulatedDelayMs > 0) {
+            setTimeout(respond, simulatedDelayMs);
+          } else {
+            respond();
+          }
         });
         return;
       }
@@ -117,6 +138,16 @@ describe('JARVIS Ollama + qwen2.5:3b End-to-End Pipeline (Loopback Verification)
     }
   });
 
+  it('enforces local-first Ollama defaults and >=120s cold-start inference timeout', () => {
+    expect(config.ollamaBaseUrl).toBe('http://127.0.0.1:11434');
+    expect(config.ollamaDefaultModel).toBe('qwen2.5:3b');
+    expect(config.ollamaInferenceTimeoutMs).toBeGreaterThanOrEqual(120_000);
+    const saved = getSavedAISettings();
+    expect(saved.inferenceMode).toBe('local_only');
+    expect(saved.preferredProvider).toBe('ollama');
+    expect(saved.preferredModel).toBe('qwen2.5:3b');
+  });
+
   it('connects to Ollama qwen2.5:3b in local_only mode and executes multi-turn chat with system & agent context', async () => {
     const statusRes = await fetch(`${apiBaseUrl}/api/ai/status`);
     expect(statusRes.status).toBe(200);
@@ -172,6 +203,85 @@ describe('JARVIS Ollama + qwen2.5:3b End-to-End Pipeline (Loopback Verification)
     const histRes = await fetch(`${apiBaseUrl}/api/conversations/${turn1.conversation.id}/messages`);
     const hist = await histRes.json();
     expect(hist.messages.length).toBe(4);
+  });
+
+  it('completes cold-start model loading without premature abort', async () => {
+    simulateColdStartUnloaded = true;
+    simulatedDelayMs = 250;
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: 'Cold start model readiness check' }),
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      createdConversationIds.push(body.conversation.id);
+
+      expect(body.provider).toBe('ollama');
+      expect(body.inferenceError).toBeNull();
+      expect(body.assistantMessage.modelUsed).toBe('qwen2.5:3b');
+      expect(body.assistantMessage.content).toContain('qwen2.5:3b verified reply');
+    } finally {
+      simulateColdStartUnloaded = false;
+      simulatedDelayMs = 0;
+    }
+  }, 15_000);
+
+  it('distinguishes timeout cancellation from user abort and connection failure', async () => {
+    // 1. Timeout cancellation
+    simulatedDelayMs = 350;
+    try {
+      const timeoutRes = await runAIInference([{ role: 'user', content: 'Slow query' }], {
+        timeoutMs: 60,
+      });
+      expect(timeoutRes.available).toBe(false);
+      expect(timeoutRes.errorType).toBe('timeout');
+      expect(timeoutRes.error).toContain('timed out');
+      expect(timeoutRes.error).not.toContain('This operation was aborted');
+    } finally {
+      simulatedDelayMs = 0;
+    }
+
+    // 2. User cancellation via AbortController (in-flight via /api/chat/interrupt)
+    simulatedDelayMs = 400;
+    try {
+      const chatPromise = fetch(`${apiBaseUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: 'Interruptible user request' }),
+      });
+      await new Promise((r) => setTimeout(r, 60));
+      const intRes = await fetch(`${apiBaseUrl}/api/chat/interrupt`, { method: 'POST' });
+      expect(intRes.status).toBe(200);
+      const intBody = await intRes.json();
+      expect(intBody.aborted).toBeGreaterThanOrEqual(1);
+
+      const chatRes = await chatPromise;
+      const chatBody = await chatRes.json();
+      createdConversationIds.push(chatBody.conversation.id);
+      expect(chatBody.inferenceError).toContain('cancelled by user');
+      expect(chatBody.assistantMessage.modelUsed).toContain('cancelled');
+    } finally {
+      simulatedDelayMs = 0;
+    }
+
+    // 3. Direct pre-aborted AbortSignal
+    const preAborted = new AbortController();
+    preAborted.abort();
+    const abortedRes = await runAIInference([{ role: 'user', content: 'Already cancelled' }], {
+      signal: preAborted.signal,
+    });
+    expect(abortedRes.available).toBe(false);
+    expect(abortedRes.errorType).toBe('aborted');
+    expect(abortedRes.error).toContain('cancelled by user');
+
+    // 4. Mid-request connection drop
+    dropNextChatConnection = true;
+    const connRes = await runAIInference([{ role: 'user', content: 'Dropped connection probe' }]);
+    expect(connRes.available).toBe(false);
+    expect(connRes.errorType).toBe('connection');
+    expect(connRes.error).toContain('connection failed');
   });
 
   it('handles Ollama shutdown cleanly without silent Gemini fallback', async () => {

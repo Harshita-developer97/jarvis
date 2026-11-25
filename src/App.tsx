@@ -1,5 +1,5 @@
 import { Menu } from 'lucide-react';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { BusinessView } from './components/BusinessView';
 import { EngineeringView } from './components/EngineeringView';
 import { MemoryResearchView } from './components/MemoryResearchView';
@@ -8,7 +8,7 @@ import { SetupWizardModal } from './components/SetupWizardModal';
 import { Sidebar } from './components/Sidebar';
 import { TasksAgentsView } from './components/TasksAgentsView';
 import { WorkspaceView } from './components/WorkspaceView';
-import { useVoiceAssistant } from './hooks/useVoiceAssistant';
+import { useVoiceAssistant, type BackendVoiceCapabilities } from './hooks/useVoiceAssistant';
 import { jarvisApi } from './lib/api';
 import type {
   AIEngineStatus,
@@ -17,6 +17,7 @@ import type {
   ChatMessage,
   Conversation,
   InferenceMode,
+  LanguageMode,
   NavSection,
   SystemTelemetry,
   TaskItem,
@@ -63,6 +64,12 @@ export default function App() {
   const [telemetry, setTelemetry] = useState<SystemTelemetry | null>(null);
   const [aiStatus, setAiStatus] = useState<AIEngineStatus | null>(null);
   const [voiceConfig, setVoiceConfig] = useState<VoiceConfig>(DEFAULT_VOICE_CONFIG);
+  const [backendVoiceCaps, setBackendVoiceCaps] = useState<BackendVoiceCapabilities | undefined>(
+    undefined
+  );
+  const speakRef = useRef<(text: string, langOverride?: LanguageMode) => void | Promise<void>>(
+    () => {}
+  );
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
@@ -90,6 +97,7 @@ export default function App() {
     setAgents(agentsRes.agents || []);
     setApprovals(toolsRes.approvals || []);
     if (voiceRes?.config) setVoiceConfig({ ...DEFAULT_VOICE_CONFIG, ...voiceRes.config });
+    if (voiceRes?.backendCapabilities) setBackendVoiceCaps(voiceRes.backendCapabilities);
   }, []);
 
   const loadConversation = useCallback(async (id: string) => {
@@ -141,6 +149,9 @@ export default function App() {
         });
         setActiveConversationId(res.conversation.id);
         setMessages((prev) => [...prev, res.userMessage, res.assistantMessage]);
+        if (voiceConfig.enabled && res.assistantMessage?.content) {
+          void speakRef.current(res.assistantMessage.content, voiceConfig.language);
+        }
         if (res.inferenceError) {
           setChatError(res.inferenceError);
         }
@@ -151,12 +162,20 @@ export default function App() {
         setSending(false);
       }
     },
-    [activeConversationId, voiceConfig.language, refreshCore]
+    [activeConversationId, voiceConfig.language, voiceConfig.enabled, refreshCore]
   );
 
-  const voiceState = useVoiceAssistant(voiceConfig, (spokenText) => {
-    void handleSendMessage(spokenText, []);
-  });
+  const voiceState = useVoiceAssistant(
+    voiceConfig,
+    (spokenText) => {
+      void handleSendMessage(spokenText, []);
+    },
+    backendVoiceCaps
+  );
+
+  useEffect(() => {
+    speakRef.current = voiceState.speak;
+  }, [voiceState.speak]);
 
   const handleUpdateVoiceConfig = async (patch: Partial<VoiceConfig>) => {
     const updated = await jarvisApi.updateVoiceConfig(patch);

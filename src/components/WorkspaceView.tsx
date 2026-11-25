@@ -12,7 +12,7 @@ import {
   Wrench,
   X,
 } from 'lucide-react';
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { jarvisApi } from '../lib/api';
 import type { AudioDeviceSummary } from '../hooks/useVoiceAssistant';
 import type {
@@ -44,7 +44,7 @@ interface WorkspaceViewProps {
     voiceError: string | null;
     inputDevices: AudioDeviceSummary[];
     outputDevices: AudioDeviceSummary[];
-    startListening: () => void;
+    startListening: (continuousOverride?: boolean) => void;
     stopListening: () => void;
     stopSpeaking: () => void;
     speak: (text: string) => void | Promise<void>;
@@ -83,6 +83,11 @@ export function WorkspaceView({
   const [draft, setDraft] = useState('');
   const [attachments, setAttachments] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [messages.length, sending]);
 
   const pendingApprovals = approvals.filter((a) => a.status === 'pending');
   const activeTasks = tasks.filter(
@@ -127,11 +132,13 @@ export function WorkspaceView({
           </div>
         ) : aiStatus ? (
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-200 bg-amber-50/70 px-6 py-3 text-xs text-amber-950">
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
               <span>
                 {aiStatus.reasonIfUnavailable ||
-                  'Local-Only Mode is active and Ollama is unreachable (silent cloud fallback disabled). Deterministic tools still run locally.'}
+                  'Local-Only Mode is active and Ollama at 127.0.0.1:11434 is unreachable from this server.'}{' '}
+                In cloud browser preview, click <strong>Switch to Cloud Mode</strong> to chat now,
+                or run <code>start-jarvis.bat</code> locally on Windows 11 to connect to your laptop&apos;s Ollama.
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -264,6 +271,7 @@ export function WorkspaceView({
                   JARVIS is reasoning and verifying tools...
                 </div>
               )}
+              <div ref={messagesEndRef} />
             </div>
           )}
         </div>
@@ -289,28 +297,51 @@ export function WorkspaceView({
                     <>
                       <Mic className="h-3.5 w-3.5" />
                       <span>
-                        Listening ({voiceState.micLevel}%)
+                        {voiceConfig.continuousListening ? 'Wake Listening' : 'Listening'} (
+                        {voiceState.micLevel}%)
                         {voiceState.voiceActive ? ' · VAD' : ''}
                       </span>
                     </>
                   ) : (
                     <>
                       <MicOff className="h-3.5 w-3.5 text-slate-500" />
-                      <span>Push to Talk</span>
+                      <span>
+                        {voiceConfig.continuousListening ? 'Start Wake Listener' : 'Push to Talk'}
+                      </span>
                     </>
                   )}
                 </button>
 
-                <label className="flex items-center gap-1.5 text-slate-600">
+                <label className="flex items-center gap-1.5 text-slate-600 whitespace-nowrap">
                   <input
                     type="checkbox"
                     checked={voiceConfig.continuousListening}
-                    onChange={(e) =>
-                      void onUpdateVoiceConfig({ continuousListening: e.target.checked })
-                    }
+                    onChange={(e) => {
+                      const next = e.target.checked;
+                      void onUpdateVoiceConfig({ continuousListening: next });
+                      if (next) {
+                        void voiceState.startListening(true);
+                      } else if (voiceState.listening) {
+                        voiceState.stopListening();
+                      }
+                    }}
                     className="rounded border-slate-300 accent-[#FF7A00]"
                   />
                   <span>Wake word ({voiceConfig.wakeWord})</span>
+                </label>
+
+                <label className="flex items-center gap-1.5 text-slate-600 whitespace-nowrap">
+                  <input
+                    type="checkbox"
+                    checked={voiceConfig.enabled}
+                    onChange={(e) => {
+                      const enabled = e.target.checked;
+                      if (!enabled) voiceState.stopSpeaking();
+                      void onUpdateVoiceConfig({ enabled });
+                    }}
+                    className="rounded border-slate-300 accent-[#FF7A00]"
+                  />
+                  <span>Auto-speak</span>
                 </label>
 
                 <select

@@ -11,6 +11,12 @@ const dataDir = path.join(workspaceRoot, 'data');
 const backupsDir = path.join(dataDir, 'backups');
 const checkpointsDir = path.join(dataDir, 'checkpoints');
 
+const parsedOllamaTimeoutMs = Number(process.env.OLLAMA_TIMEOUT_MS);
+const ollamaInferenceTimeoutMs =
+  Number.isFinite(parsedOllamaTimeoutMs) && parsedOllamaTimeoutMs >= 120_000
+    ? parsedOllamaTimeoutMs
+    : 180_000;
+
 export const config = {
   port: Number(process.env.PORT || 3000),
   host: process.env.HOST || '0.0.0.0',
@@ -20,6 +26,9 @@ export const config = {
   backupsDir,
   checkpointsDir,
   ollamaBaseUrl: (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/+$/, ''),
+  ollamaDefaultModel: process.env.OLLAMA_MODEL?.trim() || 'qwen2.5:3b',
+  ollamaInferenceTimeoutMs,
+  ollamaProbeTimeoutMs: 5000,
   llamacppBaseUrl: (process.env.LLAMACPP_BASE_URL || 'http://127.0.0.1:8080').replace(/\/+$/, ''),
   geminiApiKey: process.env.GEMINI_API_KEY || '',
   resourceLimits: {

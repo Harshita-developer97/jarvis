@@ -251,17 +251,38 @@ Strict Grounding Rules:
     // Honest deterministic fallback ONLY reporting real tool/system results & exact Ollama/AI error
     const engineStatus = await inspectAIEngineStatus();
     const errorDetail = aiResult.error || engineStatus.reasonIfUnavailable || 'Local AI engine unavailable';
-    if (groundedToolContext) {
+    if (aiResult.errorType === 'aborted') {
+      assistantText = groundedToolContext
+        ? `Request cancelled by user after executing local tools:\n${groundedToolContext.trim()}`
+        : effectiveLang === 'hinglish'
+        ? 'Request user dwara cancel kar di gayi hai.'
+        : effectiveLang === 'hi'
+        ? 'अनुरोध उपयोगकर्ता द्वारा रद्द कर दिया गया है।'
+        : 'Request was cancelled by the user before inference completed.';
+      modelUsed = `cancelled (${aiResult.inferenceMode})`;
+    } else if (aiResult.errorType === 'timeout') {
+      assistantText = groundedToolContext
+        ? `Local tool results ready, but local model response timed out:\n${groundedToolContext.trim()}\n\nTimeout: ${errorDetail}`
+        : errorDetail;
+      modelUsed = `ollama-timeout (${aiResult.inferenceMode})`;
+    } else if (groundedToolContext) {
       assistantText =
         effectiveLang === 'hinglish'
-          ? `Real tool execution complete hua (Local LLM offline/unreachable hai, isliye direct verified tool result dikha raha hoon):\n${groundedToolContext.trim()}\n\nAI Status: ${errorDetail}`
+          ? `Real tool check complete ho gaya hai (Local AI abhi unreachable hai, isliye direct verified result dikha raha hoon):\n${groundedToolContext.trim()}\n\nAI Status: ${errorDetail}`
           : effectiveLang === 'hi'
-          ? `वास्तविक टूल निष्पादन पूरा हुआ (स्थानीय AI मॉडल अभी उपलब्ध नहीं है, इसलिए सत्यापित परिणाम नीचे हैं):\n${groundedToolContext.trim()}\n\nAI स्थिति: ${errorDetail}`
+          ? `वास्तविक सिस्टम जांच पूरी हो गई है (स्थानीय AI मॉडल अभी उपलब्ध नहीं है, इसलिए सत्यापित परिणाम नीचे हैं):\n${groundedToolContext.trim()}\n\nAI स्थिति: ${errorDetail}`
           : `Executed real subsystem tools directly (local LLM synthesis unavailable):\n${groundedToolContext.trim()}\n\nAI Status: ${errorDetail}`;
+      modelUsed = `${aiResult.provider === 'ollama' ? 'ollama-error' : 'ollama-offline'} (${aiResult.inferenceMode})`;
+    } else if (effectiveLang === 'hinglish') {
+      assistantText = `Local-Only Mode active hai, lekin Ollama (${engineStatus.ollamaUrl}) abhi backend se reach nahi ho pa raha (${errorDetail}). Agar aap cloud browser preview me test kar rahe hain, toh upar "Cloud Assisted" par click karein; ya apne Windows 11 laptop par local JARVIS app ke saath Ollama run karein.`;
+      modelUsed = `${aiResult.provider === 'ollama' ? 'ollama-error' : 'ollama-offline'} (${aiResult.inferenceMode})`;
+    } else if (effectiveLang === 'hi') {
+      assistantText = `Local-Only मोड सक्रिय है, लेकिन Ollama (${engineStatus.ollamaUrl}) अभी बैकएंड से कनेक्ट नहीं हो पा रहा है (${errorDetail})। क्लाउड ब्राउज़र प्रीव्यू में चैट करने के लिए ऊपर "Cloud Assisted" चुनें, या अपने Windows 11 लैपटॉप पर लोकल JARVIS चलाएं।`;
+      modelUsed = `${aiResult.provider === 'ollama' ? 'ollama-error' : 'ollama-offline'} (${aiResult.inferenceMode})`;
     } else {
-      assistantText = `Local AI inference could not complete (${errorDetail}).\n\nSetup check:\n- ${engineStatus.setupInstructions.join('\n- ')}`;
+      assistantText = `Local-Only Mode is active, and Ollama at ${engineStatus.ollamaUrl} is currently unreachable (${errorDetail}). Switch to "Cloud Assisted" in the top bar for cloud preview chat, or run JARVIS locally on Windows 11.\n\nSetup check:\n- ${engineStatus.setupInstructions.join('\n- ')}`;
+      modelUsed = `${aiResult.provider === 'ollama' ? 'ollama-error' : 'ollama-offline'} (${aiResult.inferenceMode})`;
     }
-    modelUsed = `${aiResult.provider === 'ollama' ? 'ollama-error' : 'ollama-offline'} (${aiResult.inferenceMode})`;
   }
 
   const assistantMsgId = crypto.randomUUID();

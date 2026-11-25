@@ -17,6 +17,7 @@ export interface AIInferenceResult {
   inferenceMode: InferenceMode;
   available: boolean;
   error?: string;
+  errorType?: 'timeout' | 'aborted' | 'connection' | 'http' | 'unavailable';
   durationMs: number;
   evalCount?: number;
   promptEvalCount?: number;
@@ -69,7 +70,7 @@ export function getSavedAISettings(): SavedAISettings {
   const defaults: SavedAISettings = {
     inferenceMode: 'local_only',
     preferredProvider: 'ollama',
-    preferredModel: 'qwen2.5:3b',
+    preferredModel: config.ollamaDefaultModel,
     allowCloudFallback: false,
     ollamaUrl: config.ollamaBaseUrl,
     llamacppUrl: config.llamacppBaseUrl,
@@ -78,10 +79,10 @@ export function getSavedAISettings(): SavedAISettings {
   try {
     const parsed = JSON.parse(row.value_json) as Partial<SavedAISettings>;
     const merged: SavedAISettings = { ...defaults, ...parsed };
-    // Upgrade legacy 'auto'/null settings to explicit Ollama + qwen2.5:3b local default
+    // Upgrade legacy 'auto'/null settings to explicit Ollama + default local model
     if (merged.preferredProvider === 'auto' && !merged.preferredModel) {
       merged.preferredProvider = 'ollama';
-      merged.preferredModel = 'qwen2.5:3b';
+      merged.preferredModel = config.ollamaDefaultModel;
     }
     // Never allow silent cloud fallback unless inferenceMode is explicitly cloud_assisted
     if (merged.inferenceMode === 'local_only') {
@@ -122,7 +123,7 @@ export function saveAISettings(patch: Partial<SavedAISettings>): SavedAISettings
 async function fetchJsonWithTimeout<T>(
   url: string,
   init?: RequestInit,
-  timeoutMs = 2000
+  timeoutMs = config.ollamaProbeTimeoutMs
 ): Promise<T | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -293,11 +294,14 @@ export async function inspectAIEngineStatus(): Promise<AIEngineStatus> {
   };
 }
 
-export async function enforceLocalMemoryBudget(keepModelName?: string): Promise<string[]> {
+export async function enforceLocalMemoryBudget(
+  keepModelName?: string,
+  preFetchedStatus?: AIEngineStatus
+): Promise<string[]> {
   const telemetry = await collectSystemTelemetry(false);
   if (telemetry.memory.pressure === 'normal') return [];
 
-  const status = await inspectAIEngineStatus();
+  const status = preFetchedStatus ?? (await inspectAIEngineStatus());
   if (!status.ollamaReachable) return [];
 
   const unloaded: string[] = [];
@@ -325,6 +329,7 @@ export async function loadOllamaModel(modelName: string): Promise<{ ok: boolean;
     const res = await fetch(`${ollamaUrl}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(config.ollamaInferenceTimeoutMs),
       body: JSON.stringify({ model: modelName, prompt: '', keep_alive: '10m' }),
     });
     if (!res.ok) {
@@ -483,15 +488,38 @@ export function detectIntentAndLanguage(input: string): {
   return { intent: 'conversation', language };
 }
 
+function formatNetworkFailureDetail(err: Error): string {
+  const cause = (err as Error & { cause?: { code?: string; message?: string } }).cause;
+  if (cause?.code && cause?.message) return `${cause.code}: ${cause.message}`;
+  if (cause?.code) return cause.code;
+  if (cause?.message) return cause.message;
+  return err.message;
+}
+
 export async function runAIInference(
   messages: ChatTurnMessage[],
   options?: {
     signal?: AbortSignal;
     temperature?: number;
     maxTokens?: number;
+    timeoutMs?: number;
   }
 ): Promise<AIInferenceResult> {
   const start = Date.now();
+
+  if (options?.signal?.aborted) {
+    return {
+      text: '',
+      provider: 'none',
+      model: null,
+      inferenceMode: getSavedAISettings().inferenceMode,
+      available: false,
+      error: 'Inference request cancelled by user.',
+      errorType: 'aborted',
+      durationMs: Date.now() - start,
+    };
+  }
+
   const status = await inspectAIEngineStatus();
 
   if (!status.available || !status.activeModel) {
@@ -502,6 +530,7 @@ export async function runAIInference(
       inferenceMode: status.inferenceMode,
       available: false,
       error: status.reasonIfUnavailable || 'No inference engine available',
+      errorType: 'unavailable',
       durationMs: Date.now() - start,
     };
   }
@@ -515,22 +544,61 @@ export async function runAIInference(
       inferenceMode: 'local_only',
       available: false,
       error: 'Cloud inference blocked because Local-Only Mode is active.',
+      errorType: 'unavailable',
       durationMs: Date.now() - start,
     };
   }
 
   if (status.activeProvider === 'ollama') {
+    const effectiveTimeoutMs =
+      typeof options?.timeoutMs === 'number' && options.timeoutMs > 0
+        ? options.timeoutMs
+        : config.ollamaInferenceTimeoutMs;
+    const requestController = new AbortController();
+    let abortCause: 'timeout' | 'user' | null = null;
+
+    const onUserAbort = () => {
+      if (!requestController.signal.aborted) {
+        abortCause = 'user';
+        requestController.abort(
+          options?.signal?.reason instanceof Error
+            ? options.signal.reason
+            : new DOMException('Request cancelled by user', 'AbortError')
+        );
+      }
+    };
+
+    if (options?.signal) {
+      if (options.signal.aborted) {
+        onUserAbort();
+      } else {
+        options.signal.addEventListener('abort', onUserAbort, { once: true });
+      }
+    }
+
+    const timeoutTimer = setTimeout(() => {
+      if (!requestController.signal.aborted) {
+        abortCause = 'timeout';
+        requestController.abort(
+          new DOMException(
+            `Ollama request timed out after ${Math.round(effectiveTimeoutMs / 1000)}s`,
+            'TimeoutError'
+          )
+        );
+      }
+    }, effectiveTimeoutMs);
+
     try {
-      await enforceLocalMemoryBudget(status.activeModel);
-      const timeoutSignal = AbortSignal.timeout(45_000);
-      const combinedSignal = options?.signal
-        ? AbortSignal.any([options.signal, timeoutSignal])
-        : timeoutSignal;
+      await enforceLocalMemoryBudget(status.activeModel, status);
+
+      if (abortCause === 'user' || options?.signal?.aborted) {
+        throw new DOMException('Request cancelled by user', 'AbortError');
+      }
 
       const res = await fetch(`${status.ollamaUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        signal: combinedSignal,
+        signal: requestController.signal,
         body: JSON.stringify({
           model: status.activeModel,
           messages,
@@ -571,15 +639,34 @@ export async function runAIInference(
         promptEvalCount: data.prompt_eval_count,
       };
     } catch (err) {
-      const msg =
-        err instanceof Error
-          ? err.name === 'TimeoutError'
-            ? `Ollama request timed out after 45s at ${status.ollamaUrl}`
-            : `Ollama inference unavailable at ${status.ollamaUrl}: ${err.message}`
-          : 'Ollama inference failed';
+      let errorType: AIInferenceResult['errorType'] = 'connection';
+      let msg = 'Ollama inference failed';
+
+      if (abortCause === 'user' || (options?.signal?.aborted && abortCause !== 'timeout')) {
+        errorType = 'aborted';
+        msg = `Ollama request cancelled by user (${status.ollamaUrl}).`;
+      } else if (
+        abortCause === 'timeout' ||
+        (err instanceof Error && err.name === 'TimeoutError')
+      ) {
+        errorType = 'timeout';
+        msg = `Ollama request timed out after ${Math.round(effectiveTimeoutMs / 1000)}s at ${status.ollamaUrl} (model: ${status.activeModel}). Cold model loading can take 20-60s; retry or increase OLLAMA_TIMEOUT_MS.`;
+      } else if (
+        err instanceof Error &&
+        (err.message.startsWith('Ollama returned HTTP') || err.message.startsWith('Ollama error:'))
+      ) {
+        errorType = 'http';
+        msg = err.message;
+      } else if (err instanceof Error) {
+        errorType = 'connection';
+        msg = `Ollama connection failed at ${status.ollamaUrl}: ${formatNetworkFailureDetail(err)}`;
+      }
+
       logAudit('warn', 'ai_engine', 'ollama_inference_failed', {
         model: status.activeModel,
+        errorType,
         error: msg,
+        durationMs: Date.now() - start,
       });
       return {
         text: '',
@@ -588,8 +675,14 @@ export async function runAIInference(
         inferenceMode: status.inferenceMode,
         available: false,
         error: msg,
+        errorType,
         durationMs: Date.now() - start,
       };
+    } finally {
+      clearTimeout(timeoutTimer);
+      if (options?.signal) {
+        options.signal.removeEventListener('abort', onUserAbort);
+      }
     }
   }
 
