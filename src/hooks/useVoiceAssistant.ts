@@ -1,6 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { jarvisApi } from '../lib/api';
-import type { LanguageMode, VoiceConfig } from '../types/jarvis';
+import {
+  DEFAULT_WAKE_PHRASES,
+  detectHindiVoiceAvailable,
+  isStopSpeechCommand,
+  isWithinQuietHours,
+  matchWakePhrase,
+  resolveSpeechLangTag,
+  sanitizeForSpeech,
+  splitIntoSpeechSentences,
+} from '../lib/voiceUtils';
+import type { LanguageMode, VoiceConfig, VoiceLifecycleState } from '../types/jarvis';
 
 interface SpeechRecognitionInstance extends EventTarget {
   continuous: boolean;
@@ -27,84 +37,16 @@ export interface BackendVoiceCapabilities {
   windowsSapiAvailable?: boolean;
 }
 
-const WAKE_WORD_VARIANTS = [
-  'jarvis',
-  'jarvic',
-  'jarvish',
-  'jarves',
-  'jarviz',
-  'jervis',
-  'जार्विस',
-  'जर्विस',
-  'जार्विक',
-];
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function matchWakeWord(
-  transcript: string,
-  configuredWakeWord: string
-): { matched: boolean; command: string } {
-  const normalized = transcript.trim();
-  const candidates = Array.from(
-    new Set(
-      [configuredWakeWord.trim().toLowerCase(), ...WAKE_WORD_VARIANTS].filter(
-        (w) => w.length >= 3
-      )
-    )
-  );
-
-  const lower = normalized.toLowerCase();
-  for (const candidate of candidates) {
-    const idx = lower.indexOf(candidate);
-    if (idx !== -1) {
-      const stripped = normalized
-        .replace(new RegExp(escapeRegex(candidate), 'ig'), ' ')
-        .replace(/^[\s,.:;-]+/, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-      return {
-        matched: true,
-        command: stripped || 'Hello JARVIS',
-      };
-    }
-  }
-  return { matched: false, command: normalized };
-}
-
-function isWithinQuietHours(config: VoiceConfig): boolean {
-  if (!config.quietHoursEnabled) return false;
-  const parseMinutes = (hhmm: string) => {
-    const [h, m] = hhmm.split(':').map((v) => Number.parseInt(v, 10));
-    if (Number.isNaN(h) || Number.isNaN(m)) return null;
-    return h * 60 + m;
-  };
-  const start = parseMinutes(config.quietHoursStart);
-  const end = parseMinutes(config.quietHoursEnd);
-  if (start === null || end === null) return false;
-
-  const now = new Date();
-  const current = now.getHours() * 60 + now.getMinutes();
-  if (start <= end) {
-    return current >= start && current < end;
-  }
-  return current >= start || current < end;
-}
-
-function resolveRecognitionLang(language: LanguageMode): string {
-  if (language === 'hi') return 'hi-IN';
-  if (language === 'en') return 'en-US';
-  // en-IN recognizes Indian English, Hinglish, and mixed Hindi words dramatically better than en-US
-  return 'en-IN';
-}
-
 export function useVoiceAssistant(
   voiceConfig: VoiceConfig,
   onTranscriptCommand: (text: string) => void,
-  backendCaps?: BackendVoiceCapabilities
+  backendCaps?: BackendVoiceCapabilities,
+  options?: {
+    isProcessing?: boolean;
+    onInterruptRequest?: () => void;
+  }
 ) {
+  const [lifecycleState, setLifecycleState] = useState<VoiceLifecycleState>('disabled');
   const [listening, setListening] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
@@ -122,21 +64,55 @@ export function useVoiceAssistant(
   const audioCtxRef = useRef<AudioContext | null>(null);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
   const rafRef = useRef<number | null>(null);
+  const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sentenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const listeningRef = useRef(false);
+  const isSpeakingRef = useRef(false);
+  const echoTailUntilRef = useRef<number>(0);
+  const awaitingCommandUntilRef = useRef<number>(0);
   const speechDetectedAtRef = useRef<number | null>(null);
   const lastVoiceActivityRef = useRef<number>(0);
   const latestTranscriptRef = useRef<string>('');
   const dispatchedInSessionRef = useRef<boolean>(false);
+  const utteranceGenerationRef = useRef<number>(0);
+  const lastDispatchedRef = useRef<{ text: string; at: number }>({ text: '', at: 0 });
+  const autoWakeAttemptedRef = useRef<boolean>(false);
+
   const onTranscriptRef = useRef(onTranscriptCommand);
+  const onInterruptRef = useRef(options?.onInterruptRequest);
   const voiceConfigRef = useRef(voiceConfig);
+  const isProcessingRef = useRef(Boolean(options?.isProcessing));
 
   useEffect(() => {
     onTranscriptRef.current = onTranscriptCommand;
   }, [onTranscriptCommand]);
 
   useEffect(() => {
+    onInterruptRef.current = options?.onInterruptRequest;
+  }, [options?.onInterruptRequest]);
+
+  useEffect(() => {
     voiceConfigRef.current = voiceConfig;
   }, [voiceConfig]);
+
+  useEffect(() => {
+    const busy = Boolean(options?.isProcessing);
+    isProcessingRef.current = busy;
+    if (busy) {
+      setLifecycleState('processing');
+    } else if (!isSpeakingRef.current && listeningRef.current) {
+      setLifecycleState(
+        voiceConfigRef.current.continuousListening
+          ? awaitingCommandUntilRef.current > Date.now()
+            ? 'recording_command'
+            : 'wake_listening'
+          : 'recording_command'
+      );
+    } else if (!isSpeakingRef.current && !listeningRef.current) {
+      setLifecycleState((prev) => (prev === 'error' ? 'error' : 'disabled'));
+    }
+  }, [options?.isProcessing]);
 
   const SpeechRecognitionCtor =
     typeof window !== 'undefined'
@@ -151,6 +127,11 @@ export function useVoiceAssistant(
         backendCaps?.espeakAvailable ||
         backendCaps?.windowsSapiAvailable
     );
+
+  const hindiVoiceAvailable = useMemo(
+    () => detectHindiVoiceAvailable(availableVoices),
+    [availableVoices]
+  );
 
   const refreshDevices = useCallback(async () => {
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) return;
@@ -227,6 +208,214 @@ export function useVoiceAssistant(
     setMicLevel(0);
   }, []);
 
+  const stopSpeaking = useCallback((markInterrupted = false) => {
+    utteranceGenerationRef.current += 1;
+    if (sentenceTimerRef.current) {
+      clearTimeout(sentenceTimerRef.current);
+      sentenceTimerRef.current = null;
+    }
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    if (audioElementRef.current) {
+      audioElementRef.current.pause();
+      audioElementRef.current.currentTime = 0;
+      audioElementRef.current = null;
+    }
+    if (isSpeakingRef.current) {
+      echoTailUntilRef.current = Date.now() + 400;
+    }
+    isSpeakingRef.current = false;
+    setSpeaking(false);
+
+    if (markInterrupted) {
+      setLifecycleState('interrupted');
+      setTimeout(() => {
+        if (listeningRef.current) {
+          setLifecycleState(
+            voiceConfigRef.current.continuousListening ? 'wake_listening' : 'recording_command'
+          );
+        } else {
+          setLifecycleState('disabled');
+        }
+      }, 450);
+    } else if (listeningRef.current && !isProcessingRef.current) {
+      setLifecycleState(
+        voiceConfigRef.current.continuousListening ? 'wake_listening' : 'recording_command'
+      );
+    } else if (!isProcessingRef.current) {
+      setLifecycleState('disabled');
+    }
+  }, []);
+
+  const speak = useCallback(
+    async (text: string, langOverride?: LanguageMode) => {
+      const cfg = voiceConfigRef.current;
+      if (!cfg.enabled || !text.trim() || isWithinQuietHours(cfg)) return;
+
+      const clean = sanitizeForSpeech(text, { shortMode: cfg.shortVoiceResponses });
+      if (!clean) return;
+
+      if (cfg.interruptible) {
+        stopSpeaking(false);
+      }
+
+      const generation = ++utteranceGenerationRef.current;
+
+      const finishSpeaking = () => {
+        if (utteranceGenerationRef.current !== generation) return;
+        isSpeakingRef.current = false;
+        setSpeaking(false);
+        echoTailUntilRef.current = Date.now() + 420;
+        if (!isProcessingRef.current) {
+          if (listeningRef.current) {
+            setLifecycleState(
+              voiceConfigRef.current.continuousListening ? 'wake_listening' : 'recording_command'
+            );
+          } else {
+            setLifecycleState('disabled');
+          }
+        }
+      };
+
+      const backendHasTts = Boolean(
+        backendCaps?.piperAvailable ||
+          backendCaps?.espeakAvailable ||
+          backendCaps?.windowsSapiAvailable
+      );
+
+      if (backendHasTts) {
+        try {
+          const res = await jarvisApi.synthesizeVoice(clean.slice(0, 1100), cfg.speechRate || 1.0);
+          if (utteranceGenerationRef.current !== generation) return;
+          if (res?.ok && res.audioBase64) {
+            const audio = new Audio(`data:${res.mimeType || 'audio/wav'};base64,${res.audioBase64}`);
+            audio.volume = Math.max(0, Math.min(1, cfg.speechVolume ?? 1.0));
+            if (
+              cfg.outputDeviceId &&
+              cfg.outputDeviceId !== 'default' &&
+              typeof (audio as any).setSinkId === 'function'
+            ) {
+              await (audio as any).setSinkId(cfg.outputDeviceId).catch(() => {});
+            }
+            audioElementRef.current = audio;
+            audio.onplay = () => {
+              isSpeakingRef.current = true;
+              setSpeaking(true);
+              setLifecycleState('speaking');
+            };
+            audio.onended = finishSpeaking;
+            audio.onerror = finishSpeaking;
+            await audio.play();
+            return;
+          }
+        } catch {
+          // Fall back to browser SpeechSynthesis cleanly
+        }
+      }
+
+      if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+        setVoiceError('No local TTS engine or browser SpeechSynthesis is available.');
+        return;
+      }
+
+      try {
+        window.speechSynthesis.resume();
+      } catch {
+        // ignore
+      }
+
+      const chunks = splitIntoSpeechSentences(clean);
+      if (chunks.length === 0) return;
+
+      const langTag = resolveSpeechLangTag(langOverride || cfg.language);
+      const voices =
+        availableVoices.length > 0 ? availableVoices : window.speechSynthesis.getVoices();
+
+      let selectedVoice: SpeechSynthesisVoice | undefined;
+      if (cfg.voiceName && cfg.voiceName !== 'default') {
+        selectedVoice = voices.find((v) => v.name === cfg.voiceName);
+      }
+      if (!selectedVoice) {
+        selectedVoice =
+          voices.find((v) => v.lang.toLowerCase() === langTag.toLowerCase()) ||
+          voices.find((v) =>
+            v.lang.toLowerCase().startsWith(langTag.slice(0, 2).toLowerCase())
+          ) ||
+          voices.find((v) => v.lang.toLowerCase().startsWith('en'));
+      }
+
+      const speakChunkAt = (index: number) => {
+        if (utteranceGenerationRef.current !== generation) return;
+        if (index >= chunks.length) {
+          finishSpeaking();
+          return;
+        }
+
+        const utterance = new SpeechSynthesisUtterance(chunks[index]);
+        utterance.rate = Math.max(0.5, Math.min(2.0, cfg.speechRate || 1.0));
+        utterance.pitch = Math.max(0.5, Math.min(2.0, cfg.speechPitch || 1.0));
+        utterance.volume = Math.max(0, Math.min(1, cfg.speechVolume ?? 1.0));
+        utterance.lang = selectedVoice?.lang || langTag;
+        if (selectedVoice) utterance.voice = selectedVoice;
+
+        utterance.onstart = () => {
+          if (utteranceGenerationRef.current !== generation) return;
+          isSpeakingRef.current = true;
+          setSpeaking(true);
+          setLifecycleState('speaking');
+        };
+
+        utterance.onend = () => {
+          if (utteranceGenerationRef.current !== generation) return;
+          if (index + 1 < chunks.length) {
+            sentenceTimerRef.current = setTimeout(() => speakChunkAt(index + 1), 140);
+          } else {
+            finishSpeaking();
+          }
+        };
+
+        utterance.onerror = (ev) => {
+          if (utteranceGenerationRef.current !== generation) return;
+          const errCode = (ev as any)?.error;
+          isSpeakingRef.current = false;
+          setSpeaking(false);
+          if (errCode && errCode !== 'canceled' && errCode !== 'interrupted') {
+            setVoiceError(
+              `Browser speech playback blocked (${errCode}). Click "Speak reply" on any message or allow audio in browser.`
+            );
+            setLifecycleState('error');
+          } else {
+            finishSpeaking();
+          }
+        };
+
+        window.speechSynthesis.speak(utterance);
+      };
+
+      speakChunkAt(0);
+    },
+    [backendCaps, availableVoices, stopSpeaking]
+  );
+
+  const emitCommandSafe = useCallback((commandText: string) => {
+    const clean = commandText.trim();
+    if (!clean) return;
+    const now = Date.now();
+    if (
+      lastDispatchedRef.current.text.toLowerCase() === clean.toLowerCase() &&
+      now - lastDispatchedRef.current.at < 2200
+    ) {
+      return;
+    }
+    lastDispatchedRef.current = { text: clean, at: now };
+    awaitingCommandUntilRef.current = 0;
+    dispatchedInSessionRef.current = true;
+    setInterimText('');
+    setLifecycleState('processing');
+    onTranscriptRef.current(clean);
+  }, []);
+
   const dispatchFinalTranscript = useCallback(
     (rawText: string, continuousMode?: boolean) => {
       const cfg = voiceConfigRef.current;
@@ -234,28 +423,78 @@ export function useVoiceAssistant(
       const text = rawText.trim();
       if (!text) return;
 
+      // Spoken barge-in stop command works even while JARVIS is speaking
+      if (isSpeakingRef.current && isStopSpeechCommand(text)) {
+        stopSpeaking(true);
+        onInterruptRef.current?.();
+        setInterimText('');
+        return;
+      }
+
+      // Acoustic echo guard: ignore self-output while speaking or right after TTS completes
+      if (isSpeakingRef.current || Date.now() < echoTailUntilRef.current) {
+        return;
+      }
+
       if (isContinuous) {
-        const wakeCheck = matchWakeWord(text, cfg.wakeWord || 'JARVIS');
+        // Two-step wake window active: accept spoken command directly without repeating wake word
+        if (awaitingCommandUntilRef.current > Date.now()) {
+          const wakeOnly = matchWakePhrase(
+            text,
+            cfg.wakeWord || 'Hey Jarvis',
+            cfg.wakePhrases || DEFAULT_WAKE_PHRASES
+          );
+          if (wakeOnly.matched && !wakeOnly.hasCommand) {
+            // Re-extend listening window cleanly
+            awaitingCommandUntilRef.current = Date.now() + 12_000;
+            return;
+          }
+          emitCommandSafe(wakeOnly.matched ? wakeOnly.command : text);
+          return;
+        }
+
+        const wakeCheck = matchWakePhrase(
+          text,
+          cfg.wakeWord || 'Hey Jarvis',
+          cfg.wakePhrases || DEFAULT_WAKE_PHRASES
+        );
         if (wakeCheck.matched) {
-          dispatchedInSessionRef.current = true;
-          setInterimText('');
-          onTranscriptRef.current(wakeCheck.command);
+          if (wakeCheck.hasCommand) {
+            emitCommandSafe(wakeCheck.command);
+          } else {
+            // Wake word detected alone ("Hey Jarvis") -> enter recording_command window
+            awaitingCommandUntilRef.current = Date.now() + 12_000;
+            setLifecycleState('wake_detected');
+            setInterimText('Wake phrase detected — listening for your command...');
+            if (cfg.enabled) {
+              const promptPhrase = cfg.language === 'hi' ? 'जी, बोलिए।' : 'Yes, listening.';
+              void speak(promptPhrase, cfg.language);
+            }
+            setTimeout(() => {
+              if (listeningRef.current && awaitingCommandUntilRef.current > Date.now() && !isSpeakingRef.current) {
+                setLifecycleState('recording_command');
+              }
+            }, 600);
+          }
         } else {
           setInterimText(
-            `Heard "${text}" — say "${cfg.wakeWord || 'JARVIS'}" first to run`
+            `Heard "${text}" — say "${cfg.wakeWord || 'Hey Jarvis'}" first to activate`
           );
         }
       } else {
-        dispatchedInSessionRef.current = true;
-        setInterimText('');
-        onTranscriptRef.current(text);
+        emitCommandSafe(text);
       }
     },
-    []
+    [emitCommandSafe, speak, stopSpeaking]
   );
 
   const stopListening = useCallback(() => {
+    if (restartTimerRef.current) {
+      clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
     listeningRef.current = false;
+    awaitingCommandUntilRef.current = 0;
     setListening(false);
     try {
       recognitionRef.current?.stop();
@@ -263,24 +502,32 @@ export function useVoiceAssistant(
       // ignore
     }
     // Flush any unfinalized push-to-talk speech captured before stop
-    if (!voiceConfig.continuousListening && !dispatchedInSessionRef.current && latestTranscriptRef.current.trim()) {
+    if (
+      !voiceConfigRef.current.continuousListening &&
+      !dispatchedInSessionRef.current &&
+      latestTranscriptRef.current.trim()
+    ) {
       const buffered = latestTranscriptRef.current.trim();
       latestTranscriptRef.current = '';
-      dispatchFinalTranscript(buffered);
+      dispatchFinalTranscript(buffered, false);
     } else {
       latestTranscriptRef.current = '';
       setInterimText('');
     }
     stopAudioMeter();
-  }, [voiceConfig.continuousListening, dispatchFinalTranscript, stopAudioMeter]);
+    if (!isSpeakingRef.current && !isProcessingRef.current) {
+      setLifecycleState('disabled');
+    }
+  }, [dispatchFinalTranscript, stopAudioMeter]);
 
   const startAudioMeter = useCallback(
     async (withWhisperRecorder = false) => {
-      if (!navigator.mediaDevices?.getUserMedia) return;
+      if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) return;
+      const cfg = voiceConfigRef.current;
       try {
         const audioConstraint: MediaTrackConstraints | boolean =
-          voiceConfig.inputDeviceId && voiceConfig.inputDeviceId !== 'default'
-            ? { deviceId: { ideal: voiceConfig.inputDeviceId } }
+          cfg.inputDeviceId && cfg.inputDeviceId !== 'default'
+            ? { deviceId: { ideal: cfg.inputDeviceId } }
             : true;
 
         const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint });
@@ -308,7 +555,7 @@ export function useVoiceAssistant(
               const base64 = result.includes(',') ? result.split(',')[1] : result;
               if (!base64 || base64.length < 16) return;
               try {
-                const tr = await jarvisApi.transcribeVoice(base64, voiceConfig.language);
+                const tr = await jarvisApi.transcribeVoice(base64, voiceConfigRef.current.language);
                 if (tr?.ok && tr.text) {
                   dispatchFinalTranscript(String(tr.text));
                 } else if (tr?.error) {
@@ -334,10 +581,12 @@ export function useVoiceAssistant(
         source.connect(analyser);
 
         const data = new Uint8Array(analyser.frequencyBinCount);
-        const vadThreshold = voiceConfig.vadThreshold || 12;
-        const silenceTimeoutMs = Math.max(voiceConfig.silenceTimeoutMs || 2400, 2400);
 
         const tick = () => {
+          const liveCfg = voiceConfigRef.current;
+          const vadThreshold = liveCfg.vadThreshold || 12;
+          const silenceTimeoutMs = Math.max(liveCfg.silenceTimeoutMs || 1800, 1800);
+
           analyser.getByteFrequencyData(data);
           let sum = 0;
           for (let i = 0; i < data.length; i++) sum += data[i];
@@ -352,7 +601,7 @@ export function useVoiceAssistant(
           } else {
             setVoiceActive(false);
             if (
-              !voiceConfig.continuousListening &&
+              !liveCfg.continuousListening &&
               speechDetectedAtRef.current &&
               now - speechDetectedAtRef.current > 450 &&
               now - lastVoiceActivityRef.current > silenceTimeoutMs
@@ -374,275 +623,226 @@ export function useVoiceAssistant(
           setVoiceError(
             'Microphone blocked inside embedded preview. Open this app in a standalone Chrome/Edge tab to enable voice input.'
           );
+          setLifecycleState('error');
         } else if (withWhisperRecorder) {
           setVoiceError(`Microphone permission/device error: ${msg}`);
+          setLifecycleState('error');
         }
       }
     },
-    [
-      voiceConfig.inputDeviceId,
-      voiceConfig.vadThreshold,
-      voiceConfig.silenceTimeoutMs,
-      voiceConfig.continuousListening,
-      voiceConfig.language,
-      refreshDevices,
-      stopListening,
-      dispatchFinalTranscript,
-    ]
+    [refreshDevices, stopListening, dispatchFinalTranscript]
   );
 
-  const stopSpeaking = useCallback(() => {
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
-    if (audioElementRef.current) {
-      audioElementRef.current.pause();
-      audioElementRef.current.currentTime = 0;
-      audioElementRef.current = null;
-    }
-    setSpeaking(false);
-  }, []);
+  const startListening = useCallback(
+    async (continuousOverride?: boolean) => {
+      const cfg = voiceConfigRef.current;
+      const isContinuous = continuousOverride ?? cfg.continuousListening;
+      setVoiceError(null);
+      latestTranscriptRef.current = '';
+      dispatchedInSessionRef.current = false;
+      setLifecycleState('initializing');
 
-  const speak = useCallback(
-    async (text: string, langOverride?: LanguageMode) => {
-      if (!voiceConfig.enabled || !text.trim() || isWithinQuietHours(voiceConfig)) return;
-      if (voiceConfig.interruptible) {
-        stopSpeaking();
+      if (cfg.interruptible && isSpeakingRef.current) {
+        stopSpeaking(true);
       }
-      const clean = text.replace(/[*_`#[\]]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 1200);
-      if (!clean) return;
 
-      const backendHasTts = Boolean(
-        backendCaps?.piperAvailable ||
-          backendCaps?.espeakAvailable ||
-          backendCaps?.windowsSapiAvailable
-      );
-
-      // Only hit backend TTS endpoint when an actual local TTS binary exists on the host;
-      // otherwise stay synchronous so Chrome/Edge never drops user-gesture speech synthesis activation.
-      if (backendHasTts) {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
         try {
-          const res = await jarvisApi.synthesizeVoice(clean, voiceConfig.speechRate || 1.0);
-          if (res?.ok && res.audioBase64) {
-            const audio = new Audio(`data:${res.mimeType || 'audio/wav'};base64,${res.audioBase64}`);
-            if (
-              voiceConfig.outputDeviceId &&
-              voiceConfig.outputDeviceId !== 'default' &&
-              typeof (audio as any).setSinkId === 'function'
-            ) {
-              await (audio as any).setSinkId(voiceConfig.outputDeviceId).catch(() => {});
-            }
-            audioElementRef.current = audio;
-            audio.onplay = () => setSpeaking(true);
-            audio.onended = () => setSpeaking(false);
-            audio.onerror = () => setSpeaking(false);
-            await audio.play();
-            return;
-          }
+          window.speechSynthesis.resume();
         } catch {
-          // Fall back to browser SpeechSynthesis below
+          // ignore
         }
       }
 
-      if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-        setVoiceError('No local TTS engine or browser SpeechSynthesis is available.');
+      if (!SpeechRecognitionCtor) {
+        if (backendCaps?.whisperAvailable) {
+          listeningRef.current = true;
+          setListening(true);
+          setLifecycleState(isContinuous ? 'wake_listening' : 'recording_command');
+          await startAudioMeter(true);
+          return;
+        }
+        setVoiceError(
+          'Browser SpeechRecognition is unavailable here. Use Chrome or Edge in a standalone tab, or install Whisper for offline backend STT.'
+        );
+        setLifecycleState('error');
         return;
       }
 
-      try {
-        window.speechSynthesis.resume();
-      } catch {
-        // ignore
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.abort();
+        } catch {
+          // ignore
+        }
       }
 
-      const utterance = new SpeechSynthesisUtterance(clean);
-      utterance.rate = voiceConfig.speechRate || 1.0;
+      const recognition: SpeechRecognitionInstance = new SpeechRecognitionCtor();
+      recognition.continuous = isContinuous;
+      recognition.interimResults = true;
+      recognition.lang = resolveSpeechLangTag(cfg.language);
 
-      const lang = langOverride || voiceConfig.language;
-      if (lang === 'hi') utterance.lang = 'hi-IN';
-      else if (lang === 'en') utterance.lang = 'en-US';
-      else utterance.lang = 'en-IN';
+      recognition.onresult = (event: any) => {
+        let interim = '';
+        let finalChunk = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const res = event.results[i];
+          const transcript = res[0]?.transcript || '';
+          if (res.isFinal) finalChunk += ` ${transcript}`;
+          else interim += ` ${transcript}`;
+        }
 
-      const voices = availableVoices.length > 0 ? availableVoices : window.speechSynthesis.getVoices();
-      if (voiceConfig.voiceName && voiceConfig.voiceName !== 'default') {
-        const match = voices.find((v) => v.name === voiceConfig.voiceName);
-        if (match) utterance.voice = match;
-      } else {
-        const preferred =
-          voices.find((v) => v.lang.toLowerCase() === utterance.lang.toLowerCase()) ||
-          voices.find((v) => v.lang.toLowerCase().startsWith(utterance.lang.slice(0, 2).toLowerCase()));
-        if (preferred) utterance.voice = preferred;
-      }
+        const cleanInterim = interim.trim();
+        const cleanFinal = finalChunk.trim();
 
-      utterance.onstart = () => setSpeaking(true);
-      utterance.onend = () => setSpeaking(false);
-      utterance.onerror = (ev) => {
-        setSpeaking(false);
-        const errCode = (ev as any)?.error;
-        if (errCode && errCode !== 'canceled' && errCode !== 'interrupted') {
-          setVoiceError(
-            `Browser speech playback blocked (${errCode}). Click "Speak reply" on any message or allow audio in browser.`
-          );
+        if (cleanInterim) {
+          if (isSpeakingRef.current && isStopSpeechCommand(cleanInterim)) {
+            stopSpeaking(true);
+            onInterruptRef.current?.();
+            return;
+          }
+          if (!isSpeakingRef.current && Date.now() >= echoTailUntilRef.current) {
+            latestTranscriptRef.current = cleanInterim;
+            setInterimText(cleanInterim);
+          }
+        }
+
+        if (cleanFinal) {
+          latestTranscriptRef.current = '';
+          dispatchFinalTranscript(cleanFinal, isContinuous);
+          if (!isContinuous) {
+            stopListening();
+          }
         }
       };
 
-      window.speechSynthesis.speak(utterance);
+      recognition.onerror = (ev: any) => {
+        const code = ev?.error || 'unknown';
+        if (code === 'aborted') return;
+        if (code === 'no-speech' && isContinuous) return;
+
+        const inIframe = typeof window !== 'undefined' && window.self !== window.top;
+        if (code === 'not-allowed' || code === 'service-not-allowed') {
+          setVoiceError(
+            inIframe
+              ? 'Voice recognition was blocked by the embedded iframe sandbox. Open this preview URL in a new Chrome/Edge tab for full mic access.'
+              : 'Microphone permission denied. Allow mic permission in Chrome/Edge site settings and try again.'
+          );
+          setLifecycleState('error');
+          stopListening();
+          return;
+        }
+
+        if (code === 'network') {
+          if (backendCaps?.whisperAvailable) {
+            setVoiceError('Browser Speech API network error — switching to local Whisper capture.');
+            try {
+              recognition.abort();
+            } catch {
+              // ignore
+            }
+            void startAudioMeter(true);
+            return;
+          }
+          setVoiceError(
+            'Browser SpeechRecognition could not reach speech service (offline or blocked). Type your message below or install local Whisper for 100% offline STT.'
+          );
+          setLifecycleState('error');
+          stopListening();
+          return;
+        }
+
+        setVoiceError(`Voice recognition notice: ${code}`);
+        if (!isContinuous) {
+          setLifecycleState('error');
+          stopListening();
+        }
+      };
+
+      recognition.onend = () => {
+        if (listeningRef.current && isContinuous) {
+          setLifecycleState('recovering');
+          restartTimerRef.current = setTimeout(() => {
+            if (!listeningRef.current) return;
+            try {
+              recognition.start();
+              if (!isSpeakingRef.current && !isProcessingRef.current) {
+                setLifecycleState(
+                  awaitingCommandUntilRef.current > Date.now()
+                    ? 'recording_command'
+                    : 'wake_listening'
+                );
+              }
+            } catch {
+              setLifecycleState('error');
+              stopListening();
+            }
+          }, 220);
+          return;
+        }
+        if (listeningRef.current) {
+          stopListening();
+        }
+      };
+
+      recognitionRef.current = recognition;
+      listeningRef.current = true;
+      setListening(true);
+      setLifecycleState(isContinuous ? 'wake_listening' : 'recording_command');
+
+      try {
+        recognition.start();
+      } catch (err) {
+        setVoiceError(err instanceof Error ? err.message : 'Unable to start speech recognition');
+        setLifecycleState('error');
+        stopListening();
+        return;
+      }
+
+      void startAudioMeter(false);
     },
-    [voiceConfig, backendCaps, availableVoices, stopSpeaking]
+    [
+      SpeechRecognitionCtor,
+      backendCaps?.whisperAvailable,
+      dispatchFinalTranscript,
+      startAudioMeter,
+      stopListening,
+      stopSpeaking,
+    ]
   );
 
-  const startListening = useCallback(async (continuousOverride?: boolean) => {
-    const cfg = voiceConfigRef.current;
-    const isContinuous = continuousOverride ?? cfg.continuousListening;
-    setVoiceError(null);
-    latestTranscriptRef.current = '';
-    dispatchedInSessionRef.current = false;
+  // Auto-start Wake Listening cleanly on boot if Auto-Wake is persisted and mic permission is already granted
+  useEffect(() => {
+    if (autoWakeAttemptedRef.current) return;
+    if (!voiceConfig.enabled || !voiceConfig.continuousListening) return;
+    if (listeningRef.current || !sttSupported) return;
 
-    if (cfg.interruptible) {
-      stopSpeaking();
-    }
-
-    // Prime browser speechSynthesis inside user click gesture so async chat replies speak cleanly
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      try {
-        window.speechSynthesis.resume();
-      } catch {
-        // ignore
-      }
-    }
-
-    if (!SpeechRecognitionCtor) {
-      if (backendCaps?.whisperAvailable) {
-        listeningRef.current = true;
-        setListening(true);
-        await startAudioMeter(true);
-        return;
-      }
-      setVoiceError(
-        'Browser SpeechRecognition is unavailable here. Use Chrome or Edge in a standalone tab, or install Whisper for offline backend STT.'
-      );
-      return;
-    }
-
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.abort();
-      } catch {
-        // ignore
-      }
-    }
-
-    const recognition: SpeechRecognitionInstance = new SpeechRecognitionCtor();
-    recognition.continuous = isContinuous;
-    recognition.interimResults = true;
-    recognition.lang = resolveRecognitionLang(cfg.language);
-
-    recognition.onresult = (event: any) => {
-      let interim = '';
-      let finalChunk = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const res = event.results[i];
-        const transcript = res[0]?.transcript || '';
-        if (res.isFinal) finalChunk += ` ${transcript}`;
-        else interim += ` ${transcript}`;
-      }
-
-      const cleanInterim = interim.trim();
-      const cleanFinal = finalChunk.trim();
-      if (cleanInterim) {
-        latestTranscriptRef.current = cleanInterim;
-        setInterimText(cleanInterim);
-      }
-
-      if (cleanFinal) {
-        latestTranscriptRef.current = '';
-        dispatchFinalTranscript(cleanFinal, isContinuous);
-        if (!isContinuous) {
-          stopListening();
-        }
-      }
-    };
-
-    recognition.onerror = (ev: any) => {
-      const code = ev?.error || 'unknown';
-      if (code === 'aborted') return;
-      if (code === 'no-speech' && isContinuous) return;
-
-      const inIframe = typeof window !== 'undefined' && window.self !== window.top;
-      if (code === 'not-allowed' || code === 'service-not-allowed') {
-        setVoiceError(
-          inIframe
-            ? 'Voice recognition was blocked by the embedded iframe sandbox. Open this preview URL in a new Chrome/Edge tab for full mic access.'
-            : 'Microphone permission denied. Allow mic permission in Chrome/Edge site settings and try again.'
-        );
-        stopListening();
-        return;
-      }
-
-      if (code === 'network') {
-        if (backendCaps?.whisperAvailable) {
-          setVoiceError('Browser Speech API network error — switching to local Whisper capture.');
-          try {
-            recognition.abort();
-          } catch {
-            // ignore
+    autoWakeAttemptedRef.current = true;
+    const permApi = typeof navigator !== 'undefined' ? (navigator as any).permissions : undefined;
+    if (permApi?.query) {
+      permApi
+        .query({ name: 'microphone' })
+        .then((status: { state: string }) => {
+          if (status.state === 'granted' && voiceConfigRef.current.continuousListening) {
+            void startListening(true);
+          } else {
+            setInterimText(
+              `Auto-Wake enabled (${voiceConfigRef.current.wakeWord}) — click "Start Wake Listener" once to arm browser microphone.`
+            );
           }
-          void startAudioMeter(true);
-          return;
-        }
-        setVoiceError(
-          'Browser SpeechRecognition could not reach speech service (offline or blocked). Type your message below or install local Whisper for 100% offline STT.'
-        );
-        stopListening();
-        return;
-      }
-
-      setVoiceError(`Voice recognition notice: ${code}`);
-      if (!isContinuous) {
-        stopListening();
-      }
-    };
-
-    recognition.onend = () => {
-      if (listeningRef.current && isContinuous) {
-        try {
-          recognition.start();
-          return;
-        } catch {
-          stopListening();
-          return;
-        }
-      }
-      if (listeningRef.current) {
-        stopListening();
-      }
-    };
-
-    recognitionRef.current = recognition;
-    listeningRef.current = true;
-    setListening(true);
-
-    try {
-      recognition.start();
-    } catch (err) {
-      setVoiceError(err instanceof Error ? err.message : 'Unable to start speech recognition');
-      stopListening();
-      return;
+        })
+        .catch(() => {
+          setInterimText(
+            `Auto-Wake enabled (${voiceConfigRef.current.wakeWord}) — click "Start Wake Listener" once to arm browser microphone.`
+          );
+        });
     }
-
-    // Start live mic meter alongside recognition without blocking user-gesture recognition.start()
-    void startAudioMeter(false);
-  }, [
-    SpeechRecognitionCtor,
-    backendCaps?.whisperAvailable,
-    dispatchFinalTranscript,
-    startAudioMeter,
-    stopListening,
-    stopSpeaking,
-  ]);
+  }, [voiceConfig.enabled, voiceConfig.continuousListening, sttSupported, startListening]);
 
   useEffect(() => {
     return () => {
+      if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+      if (sentenceTimerRef.current) clearTimeout(sentenceTimerRef.current);
       listeningRef.current = false;
       try {
         recognitionRef.current?.abort();
@@ -650,13 +850,15 @@ export function useVoiceAssistant(
         // ignore
       }
       stopAudioMeter();
-      stopSpeaking();
+      stopSpeaking(false);
     };
   }, [stopAudioMeter, stopSpeaking]);
 
   return {
+    lifecycleState,
     sttSupported,
     ttsSupported,
+    hindiVoiceAvailable,
     listening,
     speaking,
     micLevel,
@@ -670,6 +872,6 @@ export function useVoiceAssistant(
     startListening,
     stopListening,
     speak,
-    stopSpeaking,
+    stopSpeaking: () => stopSpeaking(true),
   };
 }

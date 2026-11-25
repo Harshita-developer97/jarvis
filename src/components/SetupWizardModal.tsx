@@ -12,27 +12,31 @@ interface SetupWizardModalProps {
 export function SetupWizardModal({ open, onClose, onCompleted }: SetupWizardModalProps) {
   const [inspection, setInspection] = useState<any | null>(null);
   const [language, setLanguage] = useState<'auto' | 'en' | 'hi' | 'hinglish'>('auto');
-  const [wakeWord, setWakeWord] = useState('JARVIS');
+  const [wakeWord, setWakeWord] = useState('Hey Jarvis');
   const [ollamaUrl, setOllamaUrl] = useState('http://127.0.0.1:11434');
   const [inferenceMode, setInferenceMode] = useState<InferenceMode>('local_only');
   const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [pullStatus, setPullStatus] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [pulling, setPulling] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setPullStatus(null);
-    void Promise.all([jarvisApi.inspectSetup(), jarvisApi.getAutostart()]).then(
-      ([data, auto]) => {
+    setActionError(null);
+    void Promise.all([jarvisApi.inspectSetup(), jarvisApi.getAutostart()])
+      .then(([data, auto]) => {
         setInspection(data);
         if (data.voice?.config?.language) setLanguage(data.voice.config.language);
         if (data.voice?.config?.wakeWord) setWakeWord(data.voice.config.wakeWord);
         if (data.ai?.ollamaUrl) setOllamaUrl(data.ai.ollamaUrl);
         if (data.ai?.inferenceMode) setInferenceMode(data.ai.inferenceMode);
         if (typeof auto?.enabled === 'boolean') setAutostartEnabled(auto.enabled);
-      }
-    );
+      })
+      .catch((err) => {
+        setActionError(err instanceof Error ? err.message : 'Unable to probe setup status');
+      });
   }, [open]);
 
   if (!open) return null;
@@ -54,6 +58,7 @@ export function SetupWizardModal({ open, onClose, onCompleted }: SetupWizardModa
 
   const handleFinish = async () => {
     setSaving(true);
+    setActionError(null);
     try {
       await jarvisApi.completeSetup({
         language,
@@ -65,6 +70,8 @@ export function SetupWizardModal({ open, onClose, onCompleted }: SetupWizardModa
       await jarvisApi.setAutostart(autostartEnabled);
       await onCompleted();
       onClose();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Failed to save setup configuration');
     } finally {
       setSaving(false);
     }
@@ -240,6 +247,12 @@ export function SetupWizardModal({ open, onClose, onCompleted }: SetupWizardModa
                 <span>Launch JARVIS automatically on Windows 11 sign-in</span>
               </label>
             </div>
+
+            {actionError && (
+              <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                {actionError}
+              </div>
+            )}
 
             <div className="flex justify-end gap-2 border-t border-slate-200 pt-4">
               <button

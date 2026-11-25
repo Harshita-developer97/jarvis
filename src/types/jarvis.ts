@@ -107,6 +107,7 @@ export interface AIEngineStatus {
     allowCloudFallback: boolean;
     ollamaUrl: string;
     llamacppUrl: string;
+    systemPrompt?: string;
   };
 }
 
@@ -190,12 +191,28 @@ export interface MemoryItem {
   score?: number;
 }
 
+export type VoiceLifecycleState =
+  | 'disabled'
+  | 'initializing'
+  | 'wake_listening'
+  | 'wake_detected'
+  | 'recording_command'
+  | 'processing'
+  | 'speaking'
+  | 'interrupted'
+  | 'recovering'
+  | 'error';
+
 export interface VoiceConfig {
   enabled: boolean;
   wakeWord: string;
+  wakePhrases: string[];
   continuousListening: boolean;
   language: LanguageMode;
   speechRate: number;
+  speechPitch: number;
+  speechVolume: number;
+  shortVoiceResponses: boolean;
   voiceName: string;
   inputDeviceId: string;
   outputDeviceId: string;

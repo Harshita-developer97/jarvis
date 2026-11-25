@@ -688,3 +688,159 @@ export function listTestRuns(limit = 25): TestRunResult[] {
     createdAt: String(r.created_at),
   }));
 }
+
+export interface RepairIterationStep {
+  iteration: number;
+  phase: 'analyze' | 'edit' | 'test' | 'diagnose' | 'repair' | 'verify';
+  status: 'passed' | 'failed' | 'applied';
+  summary: string;
+}
+
+export async function runIterativeRepairLoop(options?: {
+  label?: string;
+  suite?: 'typecheck' | 'vitest';
+  specificFile?: string;
+  maxIterations?: number;
+  candidateFixes?: Array<Array<{ path: string; content: string }>>;
+  autoRollbackOnFail?: boolean;
+}): Promise<{
+  ok: boolean;
+  verified: boolean;
+  stoppedReason: 'verified_clean' | 'max_iterations_reached' | 'no_remaining_fixes';
+  iterationsRun: number;
+  maxIterations: number;
+  checkpointId: string | null;
+  rolledBack: boolean;
+  trace: RepairIterationStep[];
+  finalTestRun: TestRunResult;
+}> {
+  const suite = options?.suite || 'typecheck';
+  const maxIterations = Math.min(Math.max(1, options?.maxIterations ?? 3), 5);
+  const candidateFixes = options?.candidateFixes || [];
+  const allAffectedPaths = Array.from(
+    new Set(candidateFixes.flatMap((batch) => batch.map((f) => f.path)))
+  );
+
+  const checkpointId =
+    allAffectedPaths.length > 0
+      ? createFileCheckpoint(
+          allAffectedPaths,
+          options?.label || 'Autonomous iterative repair checkpoint'
+        )
+      : null;
+
+  const trace: RepairIterationStep[] = [];
+
+  // Phase 1: Analyze & initial verification test
+  const analysis = await analyzeProject('.');
+  trace.push({
+    iteration: 0,
+    phase: 'analyze',
+    status: 'passed',
+    summary: `Analyzed ${analysis.name} (${analysis.language}, ${analysis.fileCount} files)`,
+  });
+
+  let currentRun = await executeRealTests({
+    suite,
+    specificFile: options?.specificFile,
+  });
+  trace.push({
+    iteration: 0,
+    phase: 'test',
+    status: currentRun.status === 'passed' ? 'passed' : 'failed',
+    summary: `Initial ${suite} run: ${currentRun.status} (${currentRun.passed} passed, ${currentRun.failed} failed)`,
+  });
+
+  if (currentRun.status === 'passed') {
+    return {
+      ok: true,
+      verified: true,
+      stoppedReason: 'verified_clean',
+      iterationsRun: 0,
+      maxIterations,
+      checkpointId,
+      rolledBack: false,
+      trace,
+      finalTestRun: currentRun,
+    };
+  }
+
+  let iterationsRun = 0;
+  for (let i = 0; i < maxIterations; i++) {
+    const batch = candidateFixes[i];
+    if (!batch || batch.length === 0) {
+      trace.push({
+        iteration: i + 1,
+        phase: 'diagnose',
+        status: 'failed',
+        summary: `No remaining candidate repair patch for iteration ${i + 1}; stopping safely.`,
+      });
+      break;
+    }
+
+    iterationsRun++;
+    for (const fileEdit of batch) {
+      const abs = resolveSafeWorkspacePath(fileEdit.path);
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, fileEdit.content, 'utf8');
+    }
+    trace.push({
+      iteration: i + 1,
+      phase: 'repair',
+      status: 'applied',
+      summary: `Applied repair batch (${batch.map((b) => b.path).join(', ')})`,
+    });
+
+    currentRun = await executeRealTests({
+      suite,
+      specificFile: options?.specificFile,
+    });
+    trace.push({
+      iteration: i + 1,
+      phase: 'verify',
+      status: currentRun.status === 'passed' ? 'passed' : 'failed',
+      summary: `Retest ${suite}: ${currentRun.status} (${currentRun.passed} passed, ${currentRun.failed} failed)`,
+    });
+
+    if (currentRun.status === 'passed') {
+      logAudit('info', 'software_engineer', 'iterative_repair_verified', {
+        iterationsRun,
+        suite,
+      });
+      return {
+        ok: true,
+        verified: true,
+        stoppedReason: 'verified_clean',
+        iterationsRun,
+        maxIterations,
+        checkpointId,
+        rolledBack: false,
+        trace,
+        finalTestRun: currentRun,
+      };
+    }
+  }
+
+  let rolledBack = false;
+  if (checkpointId && options?.autoRollbackOnFail !== false) {
+    restoreFileCheckpoint(checkpointId);
+    rolledBack = true;
+    logAudit('warn', 'software_engineer', 'iterative_repair_rolled_back', {
+      checkpointId,
+      iterationsRun,
+    });
+  }
+
+  return {
+    ok: false,
+    verified: false,
+    stoppedReason:
+      iterationsRun >= maxIterations ? 'max_iterations_reached' : 'no_remaining_fixes',
+    iterationsRun,
+    maxIterations,
+    checkpointId,
+    rolledBack,
+    trace,
+    finalTestRun: currentRun,
+  };
+}

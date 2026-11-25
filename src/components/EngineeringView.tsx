@@ -31,20 +31,24 @@ export function EngineeringView({ mode }: EngineeringViewProps) {
   const [busy, setBusy] = useState(false);
 
   const loadAll = async () => {
-    const [p, b, t, f, env, base] = await Promise.all([
-      jarvisApi.listProjects(),
-      jarvisApi.listBugs(),
-      jarvisApi.listTests(),
-      jarvisApi.listFiles(fileQuery),
-      jarvisApi.getEngineeringEnv(),
-      jarvisApi.getBaseline('vitest'),
-    ]);
-    setProjects(p.projects || []);
-    setBugs(b.bugs || []);
-    setTestRuns(t.runs || []);
-    setFiles(f.files || []);
-    setTestEnv(env);
-    setBaseline(base.baseline || null);
+    try {
+      const [p, b, t, f, env, base] = await Promise.all([
+        jarvisApi.listProjects(),
+        jarvisApi.listBugs(),
+        jarvisApi.listTests(),
+        jarvisApi.listFiles(fileQuery),
+        jarvisApi.getEngineeringEnv(),
+        jarvisApi.getBaseline('vitest'),
+      ]);
+      setProjects(p.projects || []);
+      setBugs(b.bugs || []);
+      setTestRuns(t.runs || []);
+      setFiles(f.files || []);
+      setTestEnv(env);
+      setBaseline(base.baseline || null);
+    } catch (err) {
+      setStatusMsg(err instanceof Error ? err.message : 'Unable to load engineering data');
+    }
   };
 
   useEffect(() => {
@@ -58,6 +62,8 @@ export function EngineeringView({ mode }: EngineeringViewProps) {
       const res = await jarvisApi.analyzeProject('.');
       setStatusMsg(`Analyzed ${res.name} (${res.language} / ${res.framework}, ${res.fileCount} files)`);
       await loadAll();
+    } catch (err) {
+      setStatusMsg(err instanceof Error ? err.message : 'Workspace analysis failed');
     } finally {
       setBusy(false);
     }
@@ -70,6 +76,8 @@ export function EngineeringView({ mode }: EngineeringViewProps) {
       const res = await jarvisApi.scanBugs();
       setStatusMsg(`Bug scan finished: ${res.findings?.length || 0} finding(s) recorded.`);
       await loadAll();
+    } catch (err) {
+      setStatusMsg(err instanceof Error ? err.message : 'Bug scan failed');
     } finally {
       setBusy(false);
     }
@@ -85,6 +93,30 @@ export function EngineeringView({ mode }: EngineeringViewProps) {
         `Suite "${suite}" ${res.status} (${res.passed} passed, ${res.failed} failed in ${res.durationMs}ms)${regNote}`
       );
       await loadAll();
+    } catch (err) {
+      setStatusMsg(err instanceof Error ? err.message : `Failed to run ${suite} suite`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRepairLoop = async () => {
+    setBusy(true);
+    setStatusMsg(null);
+    try {
+      const res = await jarvisApi.repairLoop({ suite: 'typecheck', maxIterations: 3 });
+      const stepsSummary = (res.trace || [])
+        .map((it: any) => `#${it.iteration}:${it.phase}(${it.status})`)
+        .join(' -> ');
+      const outcomeText = res.stoppedReason
+        ? `${res.stoppedReason} (${res.finalTestRun?.passed ?? 0} passed, ${res.finalTestRun?.failed ?? 0} failed)`
+        : res.summary || 'completed';
+      setStatusMsg(
+        `Repair Loop ${res.ok ? 'VERIFIED CLEAN' : res.rolledBack ? 'ROLLED BACK' : 'INCOMPLETE'}: ${outcomeText}${stepsSummary ? ` [${stepsSummary}]` : ''}`
+      );
+      await loadAll();
+    } catch (err) {
+      setStatusMsg(err instanceof Error ? err.message : 'Repair loop failed');
     } finally {
       setBusy(false);
     }
@@ -113,30 +145,42 @@ export function EngineeringView({ mode }: EngineeringViewProps) {
       setStatusMsg('Run Vitest Suite once before capturing a regression baseline.');
       return;
     }
-    const saved = await jarvisApi.saveBaseline({
-      suiteName: 'vitest',
-      passed: lastVitest.passed,
-      failed: lastVitest.failed,
-    });
-    setBaseline(saved);
-    setStatusMsg(
-      `Captured Vitest baseline: ${saved.passed} passed, ${saved.failed} failed at ${saved.capturedAt}`
-    );
+    try {
+      const saved = await jarvisApi.saveBaseline({
+        suiteName: 'vitest',
+        passed: lastVitest.passed,
+        failed: lastVitest.failed,
+      });
+      setBaseline(saved);
+      setStatusMsg(
+        `Captured Vitest baseline: ${saved.passed} passed, ${saved.failed} failed at ${saved.capturedAt}`
+      );
+    } catch (err) {
+      setStatusMsg(err instanceof Error ? err.message : 'Unable to save baseline');
+    }
   };
 
   const handleOpenFile = async (relPath: string) => {
-    const res = await jarvisApi.readFile(relPath);
-    setSelectedFile(relPath);
-    setFileContent(res.content || '');
-    setDiffPreview(null);
+    try {
+      const res = await jarvisApi.readFile(relPath);
+      setSelectedFile(relPath);
+      setFileContent(res.content || '');
+      setDiffPreview(null);
+    } catch (err) {
+      setStatusMsg(err instanceof Error ? err.message : `Unable to open ${relPath}`);
+    }
   };
 
   const handleSaveFile = async () => {
     if (!selectedFile) return;
-    const res = await jarvisApi.writeFile(selectedFile, fileContent);
-    setStatusMsg(
-      `Saved ${res.relativePath} (${res.bytesWritten} bytes) with checkpoint ${res.checkpointId.slice(0, 8)}`
-    );
+    try {
+      const res = await jarvisApi.writeFile(selectedFile, fileContent);
+      setStatusMsg(
+        `Saved ${res.relativePath} (${res.bytesWritten} bytes) with checkpoint ${res.checkpointId.slice(0, 8)}`
+      );
+    } catch (err) {
+      setStatusMsg(err instanceof Error ? err.message : 'Unable to save file');
+    }
   };
 
   const handleAtomicVerifiedSave = async () => {
@@ -160,6 +204,8 @@ export function EngineeringView({ mode }: EngineeringViewProps) {
         const reloaded = await jarvisApi.readFile(selectedFile);
         setFileContent(reloaded.content || '');
       }
+    } catch (err) {
+      setStatusMsg(err instanceof Error ? err.message : 'Atomic edit verification failed');
     } finally {
       setBusy(false);
     }
@@ -287,6 +333,15 @@ export function EngineeringView({ mode }: EngineeringViewProps) {
           >
             <Play className="h-3.5 w-3.5" />
             <span>Typecheck</span>
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void handleRepairLoop()}
+            className="flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-[#1F2937] hover:border-[#FF7A00] hover:text-[#FF7A00] disabled:opacity-40 whitespace-nowrap"
+          >
+            <ShieldCheck className="h-3.5 w-3.5 text-[#FF7A00]" />
+            <span>Repair Loop</span>
           </button>
           <button
             type="button"

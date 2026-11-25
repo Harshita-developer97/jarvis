@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import {
   detectIntentAndLanguage,
+  getSavedAISettings,
   inspectAIEngineStatus,
   runAIInference,
   type ChatTurnMessage,
@@ -11,6 +12,7 @@ import { getDb } from '../database/db.js';
 import {
   extractAndStoreConversationInsights,
   searchMemories,
+  updateConversationSummary,
 } from '../memory/memoryService.js';
 import { collectSystemTelemetry } from '../monitoring/systemMonitor.js';
 import { executeTool } from '../tools/registry.js';
@@ -82,6 +84,24 @@ function formatBytesGb(bytes: number): string {
   return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
 }
 
+function parseDesktopTarget(input: string): { action: string; target?: string } {
+  const lower = input.toLowerCase();
+  const urlMatch = input.match(/https?:\/\/[^\s]+/i);
+  if (urlMatch) {
+    return { action: 'open_url', target: urlMatch[0] };
+  }
+  if (lower.includes('screenshot')) return { action: 'capture_screenshot' };
+  if (lower.includes('active window')) return { action: 'get_active_window' };
+
+  const apps = ['chrome', 'notepad', 'calculator', 'calc', 'explorer', 'vscode', 'terminal', 'edge'];
+  const matchedApp = apps.find((a) => lower.includes(a));
+  const isClose = /\b(close|band karo|kill)\b/i.test(lower);
+  if (matchedApp) {
+    return { action: isClose ? 'close_app' : 'launch_app', target: matchedApp };
+  }
+  return { action: 'check_capabilities' };
+}
+
 export async function processUserMessage(input: {
   conversationId?: string;
   content: string;
@@ -105,6 +125,11 @@ export async function processUserMessage(input: {
     conv = createConversation(input.content.slice(0, 56), input.language || 'auto');
   }
 
+  const priorMessages = getConversationMessages(conv.id);
+  const lastUserOrAssistant = [...priorMessages]
+    .reverse()
+    .find((m) => (m.role === 'user' || m.role === 'assistant') && m.content.trim().length > 4);
+
   const now = new Date().toISOString();
   const { intent, language: detectedLang } = detectIntentAndLanguage(input.content);
   const effectiveLang = input.language && input.language !== 'auto' ? input.language : detectedLang;
@@ -123,15 +148,32 @@ export async function processUserMessage(input: {
   );
 
   // Extract useful persistent memories (instructions/preferences/projects)
-  extractAndStoreConversationInsights(input.content, conv.id);
+  const autoSavedMemories = extractAndStoreConversationInsights(
+    input.content,
+    conv.id,
+    lastUserOrAssistant?.content
+  );
 
   // Budgeted context retrieval for 8 GB RAM / 2048-token context window
-  const relevantMemories = searchMemories(input.content, 4);
+  const relevantMemories = searchMemories(input.content, 5);
   const recentHistory = getConversationMessages(conv.id).slice(-6);
 
   const toolCalls: Array<{ toolId: string; status: string; summary: string }> = [];
   let groundedToolContext = '';
   let spawnedTaskId: string | undefined;
+
+  if (autoSavedMemories.length > 0) {
+    toolCalls.push({
+      toolId: 'memory_store',
+      status: 'completed',
+      summary: `Stored ${autoSavedMemories.length} persistent memory item(s): ${autoSavedMemories
+        .map((m) => m.title)
+        .join(', ')}`,
+    });
+    groundedToolContext += `\n[MEMORY CONFIRMED]\nSaved: ${autoSavedMemories
+      .map((m) => `"${m.content}"`)
+      .join('; ')}`;
+  }
 
   // Execute deterministic real tools based on intent before local LLM synthesis
   if (intent === 'diagnostics') {
@@ -148,6 +190,104 @@ export async function processUserMessage(input: {
         .map((p) => `${p.name} (PID ${p.pid}: RAM ${p.memPercent}%, CPU ${p.cpuPercent}%)`)
         .join('; ');
       groundedToolContext += `\n[REAL SYSTEM TELEMETRY]\nOS: ${t.os.platform} ${t.os.release}\nCPU: ${t.cpu.model} (${t.cpu.cores} cores, usage ${t.cpu.usagePercent}%, load1m ${t.cpu.loadAvg1m})\nRAM: ${formatBytesGb(t.memory.usedBytes)} / ${formatBytesGb(t.memory.totalBytes)} (${t.memory.usagePercent}% used, pressure: ${t.memory.pressure})\nDisk: ${formatBytesGb(t.disk.usedBytes)} / ${formatBytesGb(t.disk.totalBytes)} (${t.disk.usagePercent}%)\nTop Processes: ${topProcs || 'unavailable'}`;
+    }
+  } else if (intent === 'memory') {
+    const lower = input.content.toLowerCase();
+    if (/\b(forget\s+that|forget\s+about|forget\s+my|bhool\s+jao)\b/i.test(lower)) {
+      const cleanedQuery = input.content
+        .replace(/^(?:hey\s+)?jarvis[\s,:-]*/i, '')
+        .replace(/\b(forget\s+that|forget\s+about|forget\s+my|bhool\s+jao)\b/i, '')
+        .trim();
+      const forgetRes = await executeTool(
+        'memory_forget',
+        { query: cleanedQuery || input.content },
+        { signal: input.signal }
+      );
+      const out = forgetRes.output as { deletedCount?: number; deletedTitles?: string[] } | undefined;
+      toolCalls.push({
+        toolId: 'memory_forget',
+        status: forgetRes.status,
+        summary: forgetRes.ok
+          ? `Deleted ${out?.deletedCount ?? 0} matching memory item(s)`
+          : forgetRes.error || 'Failed',
+      });
+      groundedToolContext += `\n[MEMORY CONFIRMED]\nForgotten ${out?.deletedCount ?? 0} memory item(s) matching "${cleanedQuery}".`;
+    } else if (
+      /\b(what did i tell you|do you remember|kya bataya tha|recall)\b/i.test(lower)
+    ) {
+      const memRes = await executeTool(
+        'memory_search',
+        { query: input.content, limit: 5 },
+        { signal: input.signal }
+      );
+      const hits = Array.isArray(memRes.output) ? memRes.output : [];
+      toolCalls.push({
+        toolId: 'memory_search',
+        status: memRes.status,
+        summary: `Retrieved ${hits.length} matching memory record(s)`,
+      });
+      if (hits.length > 0) {
+        groundedToolContext += `\n[PERSISTENT MEMORY]\n${hits
+          .map((m: any) => `- (${m.category}) ${m.content}`)
+          .join('\n')}`;
+      } else {
+        groundedToolContext += `\n[PERSISTENT MEMORY]\nNo matching stored memory found for this query.`;
+      }
+    }
+  } else if (intent === 'computer_control') {
+    const desktopReq = parseDesktopTarget(input.content);
+    const deskRes = await executeTool('computer_control', desktopReq, { signal: input.signal });
+    toolCalls.push({
+      toolId: 'computer_control',
+      status: deskRes.status,
+      summary:
+        deskRes.status === 'waiting_approval'
+          ? `Approval requested (${deskRes.approvalId?.slice(0, 8)}) to run ${desktopReq.action} ${desktopReq.target || ''}`.trim()
+          : deskRes.ok
+          ? `Executed ${desktopReq.action}`
+          : deskRes.error || 'Desktop action failed',
+    });
+    if (deskRes.status === 'waiting_approval') {
+      groundedToolContext += `\n[DESKTOP APPROVAL REQUIRED]\nAction "${desktopReq.action}" (${desktopReq.target || 'desktop'}) requires owner authorization in Pending Approvals (Approval ID: ${deskRes.approvalId}).`;
+    } else if (deskRes.ok) {
+      groundedToolContext += `\n[DESKTOP RESULT]\n${JSON.stringify(deskRes.output).slice(0, 600)}`;
+    }
+  } else if (intent === 'file_ops') {
+    const lower = input.content.toLowerCase();
+    if (lower.includes('organize')) {
+      const orgRes = await executeTool(
+        'file_organize',
+        { subDir: 'data/organized_staging', dryRun: true },
+        { signal: input.signal }
+      );
+      toolCalls.push({
+        toolId: 'file_organize',
+        status: orgRes.status,
+        summary:
+          orgRes.status === 'waiting_approval'
+            ? `Approval required (${orgRes.approvalId?.slice(0, 8)}) before organizing folders`
+            : orgRes.error || 'Checked folder organization',
+      });
+      groundedToolContext += `\n[FILE ORGANIZATION]\nFolder reorganization is workspace-confined and requires owner approval (Approval ID: ${orgRes.approvalId || 'none'}) and an existing target folder inside the workspace.`;
+    } else {
+      const q = input.content.replace(/^(?:hey\s+)?jarvis[\s,:-]*/i, '').slice(0, 60);
+      const searchRes = await executeTool(
+        'file_search',
+        { query: q.includes('file') ? '' : q, maxResults: 25 },
+        { signal: input.signal }
+      );
+      toolCalls.push({
+        toolId: 'file_search',
+        status: searchRes.status,
+        summary: searchRes.ok ? 'Listed workspace files' : searchRes.error || 'File search failed',
+      });
+      if (searchRes.ok && Array.isArray(searchRes.output)) {
+        const list = (searchRes.output as Array<{ relativePath: string }>)
+          .slice(0, 10)
+          .map((f) => f.relativePath)
+          .join(', ');
+        groundedToolContext += `\n[WORKSPACE FILES]\nMatched ${(searchRes.output as unknown[]).length} entries: ${list || 'none'}`;
+      }
     }
   } else if (intent === 'reminder') {
     const item = createProductivityItem({
@@ -222,12 +362,20 @@ export async function processUserMessage(input: {
       ? 'Reply in natural conversational Hinglish (everyday Hindi + English mix in Latin script, e.g., "Aapka system status check kar liya hai..."). Stay concise and friendly.'
       : 'Reply clearly, concisely, and directly in English.';
 
-  const systemPrompt = `You are JARVIS, a local-first autonomous personal AI operating system running locally on the owner's 8 GB RAM Windows 11 laptop.
+  const customPersona = getSavedAISettings().systemPrompt?.trim();
+  const baseIdentity =
+    customPersona ||
+    'You are JARVIS, a local-first autonomous personal AI operating system running locally on the owner\'s 8 GB RAM Windows 11 laptop.';
+
+  const systemPrompt = `${baseIdentity}
 ${langDirective}
+Conversation & Speech Style:
+- Keep normal replies concise, direct, and easy to hear aloud unless detailed code or technical tables are explicitly requested.
+- Avoid outputting raw internal JSON or system log dumps in your reply.
 Strict Grounding Rules:
 - Cite ONLY real telemetry, files, tools, tasks, and memories shown below.
 - Never claim to have run a tool, edited a file, heard audio, or controlled an app unless it appears in the verified context below.
-- If a tool or capability is unavailable, state it plainly and concisely.${orchestrationBlock}${memoryBlock}${groundedToolContext.slice(0, 1400)}`;
+- If a tool or capability is unavailable or requires approval, state it plainly and concisely.${orchestrationBlock}${memoryBlock}${groundedToolContext.slice(0, 1400)}`;
 
   const turns: ChatTurnMessage[] = [
     { role: 'system', content: systemPrompt },
@@ -308,6 +456,13 @@ Strict Grounding Rules:
     replyTime,
     conv.id
   );
+
+  if (recentHistory.length >= 3) {
+    updateConversationSummary(
+      conv.id,
+      `Last topic (${intent}): ${input.content.slice(0, 120)} -> ${assistantText.slice(0, 180)}`
+    );
+  }
 
   return {
     conversation: { ...conv, title: nextTitle, language: effectiveLang, updatedAt: replyTime },

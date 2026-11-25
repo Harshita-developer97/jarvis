@@ -13,6 +13,7 @@ import {
   loadOllamaModel,
   pullOllamaModel,
   saveAISettings,
+  testAIInference,
   unloadOllamaModel,
 } from '../ai/engine.js';
 import {
@@ -52,7 +53,12 @@ import {
   getDesktopCapabilities,
   setAutostartEnabled,
 } from '../desktop/windowsControl.js';
-import { listPairedDevices, pairDevice, revokeDevice } from '../devices/deviceService.js';
+import {
+  listPairedDevices,
+  pairDevice,
+  revokeDevice,
+  verifyDeviceToken,
+} from '../devices/deviceService.js';
 import {
   analyzeProject,
   applyMultiFileChanges,
@@ -64,11 +70,14 @@ import {
   listProjects,
   listTestRuns,
   runBugScan,
+  runIterativeRepairLoop,
   saveTestBaseline,
 } from '../engineering/engineerService.js';
 import { eventBus } from '../events/eventBus.js';
 import {
+  copyWorkspaceFile,
   findDuplicateFiles,
+  moveWorkspaceFile,
   readAndParseWorkspaceFile,
   restoreFileCheckpoint,
   searchWorkspaceFiles,
@@ -77,6 +86,7 @@ import {
 import { getAuditLogs, logAudit } from '../logging/logger.js';
 import {
   deleteMemory,
+  forgetMemoriesByQuery,
   listMemories,
   searchMemories,
   storeMemory,
@@ -102,6 +112,24 @@ const activeChatAbortControllers = new Map<string, AbortController>();
 
 export function createApiRouter(): Router {
   const router = Router();
+
+  // Optional paired companion device bearer-token check (rejects forged/revoked device tokens with 401)
+  router.use((req: Request, res: Response, next) => {
+    const authHeader = req.headers.authorization;
+    const deviceIdHeader = req.headers['x-jarvis-device-id'];
+    if (authHeader && authHeader.startsWith('Bearer jrv_')) {
+      const token = authHeader.slice('Bearer '.length).trim();
+      const deviceId = typeof deviceIdHeader === 'string' ? deviceIdHeader.trim() : '';
+      if (!deviceId || !verifyDeviceToken(deviceId, token)) {
+        logAudit('security', 'device_auth', 'invalid_device_token', {
+          deviceId: deviceId || 'missing',
+          path: req.path,
+        });
+        return res.status(401).json({ error: 'Invalid or revoked device pairing token' });
+      }
+    }
+    next();
+  });
 
   // Real-time Server-Sent Events stream
   router.get('/events', (req: Request, res: Response) => {
@@ -189,7 +217,7 @@ export function createApiRouter(): Router {
   router.post('/setup/complete', (req: Request, res: Response) => {
     const schema = z.object({
       language: z.enum(['en', 'hi', 'hinglish', 'auto']).optional(),
-      wakeWord: z.string().min(2).max(24).optional(),
+      wakeWord: z.string().min(2).max(48).optional(),
       inferenceMode: z.enum(['local_only', 'cloud_assisted']).optional(),
       preferredProvider: z.enum(['auto', 'ollama', 'llamacpp', 'gemini']).optional(),
       ollamaUrl: z.string().url().optional(),
@@ -247,10 +275,16 @@ export function createApiRouter(): Router {
       allowCloudFallback: z.boolean().optional(),
       ollamaUrl: z.string().url().optional(),
       llamacppUrl: z.string().url().optional(),
+      systemPrompt: z.string().max(2000).optional(),
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
     res.json(saveAISettings(parsed.data));
+  });
+
+  router.post('/ai/test', async (_req: Request, res: Response) => {
+    const result = await testAIInference();
+    res.status(result.ok ? 200 : 503).json(result);
   });
 
   router.post('/ai/models/load', async (req: Request, res: Response) => {
@@ -340,10 +374,14 @@ export function createApiRouter(): Router {
   router.patch('/voice', (req: Request, res: Response) => {
     const schema = z.object({
       enabled: z.boolean().optional(),
-      wakeWord: z.string().min(2).max(24).optional(),
+      wakeWord: z.string().min(2).max(48).optional(),
+      wakePhrases: z.array(z.string().min(2).max(48)).optional(),
       continuousListening: z.boolean().optional(),
       language: z.enum(['en', 'hi', 'hinglish', 'auto']).optional(),
       speechRate: z.number().min(0.5).max(2.0).optional(),
+      speechPitch: z.number().min(0.5).max(2.0).optional(),
+      speechVolume: z.number().min(0.0).max(1.0).optional(),
+      shortVoiceResponses: z.boolean().optional(),
       voiceName: z.string().optional(),
       inputDeviceId: z.string().optional(),
       outputDeviceId: z.string().optional(),
@@ -443,6 +481,13 @@ export function createApiRouter(): Router {
   router.delete('/memory/:id', (req: Request, res: Response) => {
     const deleted = deleteMemory(String(req.params.id));
     res.status(deleted ? 200 : 404).json({ ok: deleted });
+  });
+
+  router.post('/memory/forget', (req: Request, res: Response) => {
+    const schema = z.object({ query: z.string().min(2).max(300) });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    res.json(forgetMemoriesByQuery(parsed.data.query));
   });
 
   router.get('/memory/export', (_req: Request, res: Response) => {
@@ -547,6 +592,59 @@ export function createApiRouter(): Router {
     } catch (err) {
       res.status(400).json({ error: err instanceof Error ? err.message : 'Write failed' });
     }
+  });
+
+  router.post('/files/move', (req: Request, res: Response) => {
+    const schema = z.object({ from: z.string().min(1), to: z.string().min(1) });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    try {
+      res.json(moveWorkspaceFile(parsed.data.from, parsed.data.to));
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Move failed' });
+    }
+  });
+
+  router.post('/files/copy', (req: Request, res: Response) => {
+    const schema = z.object({ from: z.string().min(1), to: z.string().min(1) });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    try {
+      res.json(copyWorkspaceFile(parsed.data.from, parsed.data.to));
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Copy failed' });
+    }
+  });
+
+  router.post('/files/delete', async (req: Request, res: Response) => {
+    const schema = z.object({
+      path: z.string().min(1),
+      approvedByOwner: z.boolean().optional(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    const gated = await executeTool(
+      'file_delete',
+      { path: parsed.data.path },
+      { approvedByOwner: parsed.data.approvedByOwner }
+    );
+    res.json(gated);
+  });
+
+  router.post('/files/organize', async (req: Request, res: Response) => {
+    const schema = z.object({
+      subDir: z.string().min(1),
+      dryRun: z.boolean().optional(),
+      approvedByOwner: z.boolean().optional(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    const gated = await executeTool(
+      'file_organize',
+      { subDir: parsed.data.subDir, dryRun: parsed.data.dryRun },
+      { approvedByOwner: parsed.data.approvedByOwner }
+    );
+    res.json(gated);
   });
 
   router.get('/files/duplicates', (_req: Request, res: Response) => {
@@ -688,6 +786,26 @@ export function createApiRouter(): Router {
     );
   });
 
+  router.post('/engineering/repair-loop', async (req: Request, res: Response) => {
+    const schema = z.object({
+      label: z.string().optional(),
+      suite: z.enum(['typecheck', 'vitest']).optional(),
+      specificFile: z.string().optional(),
+      maxIterations: z.number().int().min(1).max(5).optional(),
+      candidateFixes: z
+        .array(z.array(z.object({ path: z.string().min(1), content: z.string() })))
+        .optional(),
+      autoRollbackOnFail: z.boolean().optional(),
+    });
+    const parsed = schema.safeParse(req.body || {});
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    try {
+      res.json(await runIterativeRepairLoop(parsed.data));
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Repair loop failed' });
+    }
+  });
+
   // Desktop Control & Windows 11 Startup
   router.get('/desktop/capabilities', async (_req: Request, res: Response) => {
     res.json(await getDesktopCapabilities());
@@ -703,6 +821,10 @@ export function createApiRouter(): Router {
         'focus_window',
         'launch_app',
         'close_app',
+        'open_url',
+        'type_text',
+        'scroll',
+        'click_at',
         'get_clipboard',
         'set_clipboard',
         'capture_screenshot',
@@ -710,6 +832,9 @@ export function createApiRouter(): Router {
       ]),
       target: z.string().optional(),
       text: z.string().optional(),
+      x: z.number().optional(),
+      y: z.number().optional(),
+      delta: z.number().optional(),
       approvedByOwner: z.boolean().optional(),
     });
     const parsed = schema.safeParse(req.body);

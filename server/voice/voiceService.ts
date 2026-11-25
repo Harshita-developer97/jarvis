@@ -13,9 +13,13 @@ const execFileAsync = promisify(execFile);
 export interface VoiceConfig {
   enabled: boolean;
   wakeWord: string;
+  wakePhrases: string[];
   continuousListening: boolean;
   language: LanguageMode;
   speechRate: number;
+  speechPitch: number;
+  speechVolume: number;
+  shortVoiceResponses: boolean;
   voiceName: string;
   inputDeviceId: string;
   outputDeviceId: string;
@@ -43,10 +47,14 @@ export interface VoiceSubsystemStatus {
 
 const DEFAULT_VOICE_CONFIG: VoiceConfig = {
   enabled: true,
-  wakeWord: 'JARVIS',
+  wakeWord: 'Hey Jarvis',
+  wakePhrases: ['Hey Jarvis', 'Jarvis', 'Hello Jarvis'],
   continuousListening: false,
   language: 'auto',
   speechRate: 1.0,
+  speechPitch: 1.0,
+  speechVolume: 1.0,
+  shortVoiceResponses: false,
   voiceName: 'default',
   inputDeviceId: 'default',
   outputDeviceId: 'default',
@@ -73,16 +81,33 @@ export function getVoiceConfig(): VoiceConfig {
   const row = db
     .prepare('SELECT value_json FROM settings WHERE key = ?')
     .get('voice_config') as { value_json: string } | undefined;
-  if (!row) return { ...DEFAULT_VOICE_CONFIG };
+  if (!row) return { ...DEFAULT_VOICE_CONFIG, wakePhrases: [...DEFAULT_VOICE_CONFIG.wakePhrases] };
   try {
-    return { ...DEFAULT_VOICE_CONFIG, ...JSON.parse(row.value_json) };
+    const parsed = JSON.parse(row.value_json) as Partial<VoiceConfig>;
+    const merged: VoiceConfig = {
+      ...DEFAULT_VOICE_CONFIG,
+      ...parsed,
+      wakePhrases:
+        Array.isArray(parsed.wakePhrases) && parsed.wakePhrases.length > 0
+          ? parsed.wakePhrases
+          : [...DEFAULT_VOICE_CONFIG.wakePhrases],
+    };
+    return merged;
   } catch {
-    return { ...DEFAULT_VOICE_CONFIG };
+    return { ...DEFAULT_VOICE_CONFIG, wakePhrases: [...DEFAULT_VOICE_CONFIG.wakePhrases] };
   }
 }
 
 export function updateVoiceConfig(patch: Partial<VoiceConfig>): VoiceConfig {
-  const next = { ...getVoiceConfig(), ...patch };
+  const current = getVoiceConfig();
+  const next: VoiceConfig = {
+    ...current,
+    ...patch,
+    wakePhrases:
+      Array.isArray(patch.wakePhrases) && patch.wakePhrases.length > 0
+        ? patch.wakePhrases.map((p) => p.trim()).filter(Boolean)
+        : current.wakePhrases,
+  };
   const db = getDb();
   db.prepare(
     `INSERT INTO settings (key, value_json, updated_at)

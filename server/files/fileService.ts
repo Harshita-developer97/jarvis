@@ -253,3 +253,141 @@ export function findDuplicateFiles(subDir?: string): Array<{
     .filter(([, g]) => g.files.length > 1)
     .map(([hash, g]) => ({ hash, sizeBytes: g.sizeBytes, files: g.files }));
 }
+
+export function moveWorkspaceFile(
+  srcRel: string,
+  destRel: string,
+  taskId?: string
+): { from: string; to: string; checkpointId: string } {
+  const srcAbs = resolveSafeWorkspacePath(srcRel);
+  const destAbs = resolveSafeWorkspacePath(destRel);
+  if (!fs.existsSync(srcAbs) || !fs.statSync(srcAbs).isFile()) {
+    throw new Error(`Source file not found: ${srcRel}`);
+  }
+  const fromRel = path.relative(config.workspaceRoot, srcAbs).replace(/\\/g, '/');
+  const toRel = path.relative(config.workspaceRoot, destAbs).replace(/\\/g, '/');
+  const checkpointId = createFileCheckpoint([fromRel, toRel], `Before move ${fromRel} -> ${toRel}`, taskId);
+
+  fs.mkdirSync(path.dirname(destAbs), { recursive: true });
+  fs.renameSync(srcAbs, destAbs);
+  return { from: fromRel, to: toRel, checkpointId };
+}
+
+export function copyWorkspaceFile(
+  srcRel: string,
+  destRel: string
+): { from: string; to: string; bytesCopied: number } {
+  const srcAbs = resolveSafeWorkspacePath(srcRel);
+  const destAbs = resolveSafeWorkspacePath(destRel);
+  if (!fs.existsSync(srcAbs) || !fs.statSync(srcAbs).isFile()) {
+    throw new Error(`Source file not found: ${srcRel}`);
+  }
+  const fromRel = path.relative(config.workspaceRoot, srcAbs).replace(/\\/g, '/');
+  const toRel = path.relative(config.workspaceRoot, destAbs).replace(/\\/g, '/');
+  fs.mkdirSync(path.dirname(destAbs), { recursive: true });
+  fs.copyFileSync(srcAbs, destAbs);
+  const stat = fs.statSync(destAbs);
+  return { from: fromRel, to: toRel, bytesCopied: stat.size };
+}
+
+export function deleteWorkspaceFile(
+  relPath: string,
+  taskId?: string
+): { deletedPath: string; checkpointId: string } {
+  const targetAbs = resolveSafeWorkspacePath(relPath);
+  if (!fs.existsSync(targetAbs) || !fs.statSync(targetAbs).isFile()) {
+    throw new Error(`File not found: ${relPath}`);
+  }
+  const rel = path.relative(config.workspaceRoot, targetAbs).replace(/\\/g, '/');
+  const checkpointId = createFileCheckpoint([rel], `Before deleting ${rel}`, taskId);
+  fs.unlinkSync(targetAbs);
+  return { deletedPath: rel, checkpointId };
+}
+
+const ORGANIZE_EXT_GROUPS: Record<string, string> = {
+  '.pdf': 'documents',
+  '.doc': 'documents',
+  '.docx': 'documents',
+  '.txt': 'documents',
+  '.md': 'documents',
+  '.csv': 'data',
+  '.json': 'data',
+  '.xlsx': 'data',
+  '.png': 'images',
+  '.jpg': 'images',
+  '.jpeg': 'images',
+  '.webp': 'images',
+  '.svg': 'images',
+  '.zip': 'archives',
+  '.tar': 'archives',
+  '.gz': 'archives',
+  '.mp3': 'audio',
+  '.wav': 'audio',
+  '.mp4': 'video',
+};
+
+export function organizeWorkspaceDirectory(
+  subDir: string,
+  options?: { dryRun?: boolean; taskId?: string }
+): {
+  directory: string;
+  dryRun: boolean;
+  plannedMoves: Array<{ from: string; to: string }>;
+  movedCount: number;
+  checkpointId: string | null;
+} {
+  const baseAbs = resolveSafeWorkspacePath(subDir);
+  if (!fs.existsSync(baseAbs) || !fs.statSync(baseAbs).isDirectory()) {
+    throw new Error(`Directory not found inside workspace: ${subDir}`);
+  }
+  const baseRel = path.relative(config.workspaceRoot, baseAbs).replace(/\\/g, '/');
+  if (
+    baseRel === '' ||
+    baseRel === 'src' ||
+    baseRel.startsWith('src/') ||
+    baseRel === 'server' ||
+    baseRel.startsWith('server/')
+  ) {
+    throw new Error('Refusing to reorganize core source directories (src/, server/, or root).');
+  }
+
+  const entries = fs.readdirSync(baseAbs, { withFileTypes: true });
+  const plannedMoves: Array<{ from: string; to: string }> = [];
+  const srcPaths: string[] = [];
+
+  for (const entry of entries) {
+    if (!entry.isFile() || entry.name.startsWith('.env')) continue;
+    const ext = path.extname(entry.name).toLowerCase();
+    const bucket = ORGANIZE_EXT_GROUPS[ext] || 'other';
+    const fromRel = path.posix.join(baseRel, entry.name);
+    const toRel = path.posix.join(baseRel, bucket, entry.name);
+    plannedMoves.push({ from: fromRel, to: toRel });
+    srcPaths.push(fromRel);
+  }
+
+  if (options?.dryRun || plannedMoves.length === 0) {
+    return {
+      directory: baseRel,
+      dryRun: Boolean(options?.dryRun),
+      plannedMoves,
+      movedCount: 0,
+      checkpointId: null,
+    };
+  }
+
+  const checkpointId = createFileCheckpoint(srcPaths, `Organize ${baseRel}`, options?.taskId);
+  for (const mv of plannedMoves) {
+    const srcAbs = resolveSafeWorkspacePath(mv.from);
+    const destAbs = resolveSafeWorkspacePath(mv.to);
+    fs.mkdirSync(path.dirname(destAbs), { recursive: true });
+    fs.renameSync(srcAbs, destAbs);
+  }
+
+  return {
+    directory: baseRel,
+    dryRun: false,
+    plannedMoves,
+    movedCount: plannedMoves.length,
+    checkpointId,
+  };
+}

@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
 import { jarvisApi } from '../lib/api';
+import { formatVoiceLifecycleLabel } from '../lib/voiceUtils';
 import type { AudioDeviceSummary } from '../hooks/useVoiceAssistant';
 import type {
   AIEngineStatus,
@@ -23,6 +24,7 @@ import type {
   LanguageMode,
   TaskItem,
   VoiceConfig,
+  VoiceLifecycleState,
 } from '../types/jarvis';
 
 interface WorkspaceViewProps {
@@ -34,8 +36,10 @@ interface WorkspaceViewProps {
   approvals: ApprovalItem[];
   voiceConfig: VoiceConfig;
   voiceState: {
+    lifecycleState: VoiceLifecycleState;
     sttSupported: boolean;
     ttsSupported: boolean;
+    hindiVoiceAvailable: boolean;
     listening: boolean;
     speaking: boolean;
     micLevel: number;
@@ -44,7 +48,7 @@ interface WorkspaceViewProps {
     voiceError: string | null;
     inputDevices: AudioDeviceSummary[];
     outputDevices: AudioDeviceSummary[];
-    startListening: (continuousOverride?: boolean) => void;
+    startListening: (continuousOverride?: boolean) => void | Promise<void>;
     stopListening: () => void;
     stopSpeaking: () => void;
     speak: (text: string) => void | Promise<void>;
@@ -312,6 +316,10 @@ export function WorkspaceView({
                   )}
                 </button>
 
+                <span className="font-mono text-[11px] text-slate-500 whitespace-nowrap">
+                  Voice: <strong className="font-semibold text-[#1F2937]">{formatVoiceLifecycleLabel(voiceState.lifecycleState)}</strong>
+                </span>
+
                 <label className="flex items-center gap-1.5 text-slate-600 whitespace-nowrap">
                   <input
                     type="checkbox"
@@ -327,7 +335,7 @@ export function WorkspaceView({
                     }}
                     className="rounded border-slate-300 accent-[#FF7A00]"
                   />
-                  <span>Wake word ({voiceConfig.wakeWord})</span>
+                  <span>Auto-Wake ({voiceConfig.wakeWord})</span>
                 </label>
 
                 <label className="flex items-center gap-1.5 text-slate-600 whitespace-nowrap">
@@ -342,6 +350,18 @@ export function WorkspaceView({
                     className="rounded border-slate-300 accent-[#FF7A00]"
                   />
                   <span>Auto-speak</span>
+                </label>
+
+                <label className="flex items-center gap-1.5 text-slate-600 whitespace-nowrap">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(voiceConfig.shortVoiceResponses)}
+                    onChange={(e) =>
+                      void onUpdateVoiceConfig({ shortVoiceResponses: e.target.checked })
+                    }
+                    className="rounded border-slate-300 accent-[#FF7A00]"
+                  />
+                  <span>Short speech</span>
                 </label>
 
                 <select
@@ -404,6 +424,11 @@ export function WorkspaceView({
             {voiceState.interimText && (
               <div className="text-xs italic text-slate-500">
                 Heard: &ldquo;{voiceState.interimText}&rdquo;
+              </div>
+            )}
+            {voiceConfig.language === 'hi' && !voiceState.hindiVoiceAvailable && voiceState.ttsSupported && (
+              <div className="text-xs text-amber-700">
+                No Hindi (hi-IN) browser speech synthesis voice detected on this host — spoken Hindi output uses the default system voice fallback.
               </div>
             )}
             {voiceState.voiceError && (

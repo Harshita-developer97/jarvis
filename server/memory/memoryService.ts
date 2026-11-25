@@ -288,31 +288,93 @@ export function purgeExpiredMemories(): number {
   });
 }
 
+export function forgetMemoriesByQuery(query: string): {
+  deletedCount: number;
+  deletedIds: string[];
+  deletedTitles: string[];
+} {
+  const cleanQuery = query.trim();
+  if (!cleanQuery) {
+    return { deletedCount: 0, deletedIds: [], deletedTitles: [] };
+  }
+  const matches = searchMemories(cleanQuery, 10);
+  const deletedIds: string[] = [];
+  const deletedTitles: string[] = [];
+
+  for (const m of matches) {
+    if (deleteMemory(m.id)) {
+      deletedIds.push(m.id);
+      deletedTitles.push(m.title);
+    }
+  }
+  return {
+    deletedCount: deletedIds.length,
+    deletedIds,
+    deletedTitles,
+  };
+}
+
+export function updateConversationSummary(conversationId: string, summary: string): void {
+  const db = getDb();
+  const clean = redactSecrets(summary.trim()).slice(0, 600);
+  db.prepare('UPDATE conversations SET summary = ?, updated_at = ? WHERE id = ?').run(
+    clean,
+    new Date().toISOString(),
+    conversationId
+  );
+}
+
 export function extractAndStoreConversationInsights(
   userMessage: string,
-  conversationId: string
+  conversationId: string,
+  fallbackPreviousContent?: string
 ): MemoryItem[] {
   const saved: MemoryItem[] = [];
   const lower = userMessage.toLowerCase();
 
-  // Explicit user instructions / preferences ("remember that...", "meri preference...", "always...")
+  // Do not auto-store inside forget commands
+  if (/\b(forget\s+that|forget\s+about|forget\s+my|bhool\s+jao)\b/i.test(lower)) {
+    return saved;
+  }
+
+  // Handle "Jarvis, remember this." referencing immediately preceding turn content
+  if (
+    /\bremember\s+this\b/i.test(lower) &&
+    fallbackPreviousContent &&
+    fallbackPreviousContent.trim().length >= 4
+  ) {
+    const res = storeMemory({
+      category: 'instruction',
+      title: fallbackPreviousContent.trim().slice(0, 72),
+      content: fallbackPreviousContent.trim(),
+      source: `conversation:${conversationId}`,
+      context: 'Explicitly saved via "remember this"',
+      importance: 0.9,
+    });
+    if (res.stored && res.item) saved.push(res.item);
+  }
+
+  // Explicit user instructions / preferences / facts
   const triggers = [
-    /(?:remember\s+that|yaad\s+rakhna|note\s+that|always\s+use|my\s+preference\s+is|prefer\s+to)\s+(.{8,300})/i,
-    /(?:i\s+am\s+building|my\s+project\s+is|we\s+are\s+working\s+on|mera\s+project)\s+(.{8,300})/i,
+    /(?:remember\s+that|remember\s+my|yaad\s+rakhna|note\s+that|always\s+use|my\s+preference\s+is|prefer\s+to)\s+(.{4,300})/i,
+    /(?:i\s+am\s+building|my\s+project\s+is|we\s+are\s+working\s+on|mera\s+project|my\s+favorite\s+[a-z0-9\s]+\s+is)\s+(.{4,300})/i,
   ];
 
   for (const regex of triggers) {
     const match = userMessage.match(regex);
-    if (match && match[1]) {
+    if (match && match[0]) {
+      const captured = match[1]?.trim() || match[0].trim();
+      const contentToStore =
+        /my\s+favorite/i.test(match[0]) ? match[0].trim() : captured;
       const category: MemoryCategory = lower.includes('project')
         ? 'project'
-        : lower.includes('prefer')
+        : lower.includes('prefer') || lower.includes('favorite')
         ? 'preference'
         : 'instruction';
       const res = storeMemory({
         category,
-        title: match[1].slice(0, 72),
-        content: match[1].trim(),
+        title: contentToStore.slice(0, 72),
+        content: contentToStore,
         source: `conversation:${conversationId}`,
         context: 'Auto-extracted from user instruction',
         importance: 0.85,

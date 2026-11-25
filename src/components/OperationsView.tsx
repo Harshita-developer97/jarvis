@@ -13,6 +13,8 @@ interface OperationsViewProps {
     inputDevices: AudioDeviceSummary[];
     outputDevices: AudioDeviceSummary[];
   };
+  voiceVoices: SpeechSynthesisVoice[];
+  hindiVoiceAvailable: boolean;
   onUpdateVoiceConfig: (patch: Partial<VoiceConfig>) => Promise<void>;
   onSwitchInferenceMode: (mode: InferenceMode) => Promise<void>;
   onRefreshAI: () => Promise<void>;
@@ -24,6 +26,8 @@ export function OperationsView({
   aiStatus,
   voiceConfig,
   voiceDevices,
+  voiceVoices,
+  hindiVoiceAvailable,
   onUpdateVoiceConfig,
   onSwitchInferenceMode,
   onRefreshAI,
@@ -41,36 +45,74 @@ export function OperationsView({
   const [dbStatus, setDbStatus] = useState<any | null>(null);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [ollamaUrl, setOllamaUrl] = useState(aiStatus?.ollamaUrl || 'http://127.0.0.1:11434');
+  const [preferredModel, setPreferredModel] = useState(
+    aiStatus?.settings?.preferredModel || aiStatus?.activeModel || 'qwen2.5:3b'
+  );
+  const [systemPrompt, setSystemPrompt] = useState(aiStatus?.settings?.systemPrompt || '');
+  const [wakePhrasesDraft, setWakePhrasesDraft] = useState(
+    (voiceConfig.wakePhrases || ['Hey Jarvis', 'Jarvis', 'Hello Jarvis']).join(', ')
+  );
+  const [testingAI, setTestingAI] = useState(false);
+  const [testResult, setTestResult] = useState<{
+    ok: boolean;
+    provider: string;
+    model: string;
+    latencyMs: number;
+    responseText: string;
+    error?: string;
+  } | null>(null);
   const [pullModelName, setPullModelName] = useState('qwen2.5:3b');
   const [pullingModel, setPullingModel] = useState(false);
   const [desktopCaps, setDesktopCaps] = useState<any | null>(null);
   const [autostart, setAutostart] = useState<any | null>(null);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (aiStatus?.ollamaUrl) setOllamaUrl(aiStatus.ollamaUrl);
+    if (aiStatus?.settings?.preferredModel) {
+      setPreferredModel(aiStatus.settings.preferredModel);
+    } else if (aiStatus?.activeModel) {
+      setPreferredModel(aiStatus.activeModel);
+    }
+    if (typeof aiStatus?.settings?.systemPrompt === 'string') {
+      setSystemPrompt(aiStatus.settings.systemPrompt);
+    }
+  }, [aiStatus?.ollamaUrl, aiStatus?.settings?.preferredModel, aiStatus?.settings?.systemPrompt, aiStatus?.activeModel]);
+
+  useEffect(() => {
+    if (voiceConfig.wakePhrases?.length) {
+      setWakePhrasesDraft(voiceConfig.wakePhrases.join(', '));
+    }
+  }, [voiceConfig.wakePhrases]);
+
   const loadData = async () => {
-    if (mode === 'automations') {
-      const res = await jarvisApi.getAutomations();
-      setAutomations(res.automations || []);
-      setAutoRuns(res.runs || []);
-    } else if (mode === 'devices') {
-      const res = await jarvisApi.listDevices();
-      setDevices(res.devices || []);
-    } else if (mode === 'settings') {
-      const [caps, auto] = await Promise.all([
-        jarvisApi.getDesktopCapabilities(),
-        jarvisApi.getAutostart(),
-      ]);
-      setDesktopCaps(caps);
-      setAutostart(auto);
-    } else if (mode === 'health') {
-      const [tools, db, audit] = await Promise.all([
-        jarvisApi.getTools(),
-        jarvisApi.getDatabaseStatus(),
-        jarvisApi.getAuditLogs(60),
-      ]);
-      setToolsData(tools);
-      setDbStatus(db);
-      setAuditLogs(audit.logs || []);
+    try {
+      if (mode === 'automations') {
+        const res = await jarvisApi.getAutomations();
+        setAutomations(res.automations || []);
+        setAutoRuns(res.runs || []);
+      } else if (mode === 'devices') {
+        const res = await jarvisApi.listDevices();
+        setDevices(res.devices || []);
+      } else if (mode === 'settings') {
+        const [caps, auto] = await Promise.all([
+          jarvisApi.getDesktopCapabilities(),
+          jarvisApi.getAutostart(),
+        ]);
+        setDesktopCaps(caps);
+        setAutostart(auto);
+      } else if (mode === 'health') {
+        const [tools, db, audit] = await Promise.all([
+          jarvisApi.getTools(),
+          jarvisApi.getDatabaseStatus(),
+          jarvisApi.getAuditLogs(60),
+        ]);
+        setToolsData(tools);
+        setDbStatus(db);
+        setAuditLogs(audit.logs || []);
+      }
+    } catch (err) {
+      setActionMsg(err instanceof Error ? err.message : 'Unable to load operations telemetry');
     }
   };
 
@@ -85,15 +127,19 @@ export function OperationsView({
           onSubmit={async (e) => {
             e.preventDefault();
             if (!autoName.trim()) return;
-            await jarvisApi.createAutomation({
-              name: autoName.trim(),
-              description: 'Scheduled typecheck guardian',
-              triggerType: 'interval',
-              intervalSeconds: 600,
-              actionType: 'typecheck_guardian',
-            });
-            setAutoName('');
-            await loadData();
+            try {
+              await jarvisApi.createAutomation({
+                name: autoName.trim(),
+                description: 'Scheduled typecheck guardian',
+                triggerType: 'interval',
+                intervalSeconds: 600,
+                actionType: 'typecheck_guardian',
+              });
+              setAutoName('');
+              await loadData();
+            } catch (err) {
+              setActionMsg(err instanceof Error ? err.message : 'Unable to create automation');
+            }
           }}
           className="flex flex-wrap gap-2 rounded-lg border border-slate-200 bg-white p-4"
         >
@@ -175,15 +221,19 @@ export function OperationsView({
             onSubmit={async (e) => {
               e.preventDefault();
               if (!devName.trim()) return;
-              const res = await jarvisApi.pairDevice({
-                name: devName.trim(),
-                platform: devPlatform,
-                deviceType: devPlatform === 'android' ? 'mobile' : 'desktop',
-                capabilities: ['chat', 'voice', 'notifications', 'tasks'],
-              });
-              setIssuedToken(res.pairingToken);
-              setDevName('');
-              await loadData();
+              try {
+                const res = await jarvisApi.pairDevice({
+                  name: devName.trim(),
+                  platform: devPlatform,
+                  deviceType: devPlatform === 'android' ? 'mobile' : 'desktop',
+                  capabilities: ['chat', 'voice', 'notifications', 'tasks'],
+                });
+                setIssuedToken(res.pairingToken);
+                setDevName('');
+                await loadData();
+              } catch (err) {
+                setActionMsg(err instanceof Error ? err.message : 'Device pairing failed');
+              }
             }}
             className="mt-4 flex flex-wrap gap-2"
           >
@@ -298,6 +348,91 @@ export function OperationsView({
               <p className="mt-1.5 text-[11px] text-slate-500">
                 Local-Only Mode strictly blocks silent cloud fallback and only uses local Ollama or llama.cpp models.
               </p>
+
+              <label className="mt-3 block font-medium text-slate-600">Active Model Selector</label>
+              <div className="mt-1.5 flex gap-2">
+                <select
+                  aria-label="Active AI model"
+                  value={preferredModel}
+                  onChange={async (e) => {
+                    const nextModel = e.target.value;
+                    setPreferredModel(nextModel);
+                    const matched = aiStatus?.models.find((m) => m.name === nextModel);
+                    try {
+                      await jarvisApi.saveAISettings({
+                        preferredModel: nextModel,
+                        ...(matched ? { preferredProvider: matched.provider } : {}),
+                      });
+                      setActionMsg(`Active model switched to ${nextModel}`);
+                      await onRefreshAI();
+                    } catch (err) {
+                      setActionMsg(err instanceof Error ? err.message : 'Unable to switch model');
+                    }
+                  }}
+                  className="flex-1 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs"
+                >
+                  {!aiStatus?.models.some((m) => m.name === preferredModel) && (
+                    <option value={preferredModel}>{preferredModel} (configured)</option>
+                  )}
+                  {(aiStatus?.models || []).map((m) => (
+                    <option key={m.id} value={m.name}>
+                      {m.name} ({m.provider} · {m.tier})
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  disabled={testingAI}
+                  onClick={async () => {
+                    setTestingAI(true);
+                    setTestResult(null);
+                    try {
+                      const res = await jarvisApi.testAI();
+                      setTestResult({
+                        ok: Boolean(res.ok),
+                        provider: res.provider || 'none',
+                        model: res.model || preferredModel,
+                        latencyMs: res.latencyMs || 0,
+                        responseText: res.reply || res.responseText || '',
+                        error: res.error,
+                      });
+                    } catch (err) {
+                      setTestResult({
+                        ok: false,
+                        provider: aiStatus?.activeProvider || 'none',
+                        model: preferredModel,
+                        latencyMs: 0,
+                        responseText: '',
+                        error: err instanceof Error ? err.message : 'Inference test failed',
+                      });
+                    } finally {
+                      setTestingAI(false);
+                    }
+                  }}
+                  className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 font-medium text-[#1F2937] hover:border-[#FF7A00] hover:text-[#FF7A00] disabled:opacity-40 whitespace-nowrap"
+                >
+                  {testingAI ? 'Testing...' : 'Test Inference'}
+                </button>
+              </div>
+              {testResult && (
+                <div
+                  className={`mt-2 rounded border px-3 py-2 text-[11px] ${
+                    testResult.ok
+                      ? 'border-emerald-200 bg-emerald-50/70 text-emerald-950'
+                      : 'border-red-200 bg-red-50 text-red-900'
+                  }`}
+                >
+                  {testResult.ok ? (
+                    <span>
+                      Pass · <strong className="font-mono">{testResult.provider}/{testResult.model}</strong> ({testResult.latencyMs}ms): &ldquo;{testResult.responseText}&rdquo;
+                    </span>
+                  ) : (
+                    <span>
+                      Failed ({testResult.provider}/{testResult.model}): {testResult.error}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
 
             <div>
@@ -311,10 +446,15 @@ export function OperationsView({
                 <button
                   type="button"
                   onClick={() =>
-                    void jarvisApi.saveAISettings({ ollamaUrl }).then(() => {
-                      setActionMsg('Saved Ollama URL');
-                      return onRefreshAI();
-                    })
+                    void jarvisApi
+                      .saveAISettings({ ollamaUrl })
+                      .then(() => {
+                        setActionMsg('Saved Ollama URL');
+                        return onRefreshAI();
+                      })
+                      .catch((err) =>
+                        setActionMsg(err instanceof Error ? err.message : 'Failed to save URL')
+                      )
                   }
                   className="rounded-md bg-[#1F2937] px-3 py-1.5 font-medium text-white"
                 >
@@ -355,6 +495,36 @@ export function OperationsView({
                 </button>
               </div>
             </div>
+          </div>
+
+          <div className="mt-4 border-t border-slate-100 pt-4 text-xs">
+            <div className="flex items-center justify-between">
+              <label className="font-medium text-slate-600">
+                Custom JARVIS System Prompt / Persona Instructions (optional override appended to system context)
+              </label>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await jarvisApi.saveAISettings({ systemPrompt });
+                    setActionMsg('Saved custom JARVIS system prompt.');
+                    await onRefreshAI();
+                  } catch (err) {
+                    setActionMsg(err instanceof Error ? err.message : 'Unable to save system prompt');
+                  }
+                }}
+                className="rounded-md bg-[#1F2937] px-3 py-1 font-medium text-white hover:bg-slate-800"
+              >
+                Save Prompt
+              </button>
+            </div>
+            <textarea
+              rows={3}
+              value={systemPrompt}
+              onChange={(e) => setSystemPrompt(e.target.value)}
+              placeholder="Example: Respond concisely for voice playback, prioritize TypeScript diagnostics, and address me as Boss."
+              className="mt-2 w-full resize-none rounded-md border border-slate-200 bg-slate-50/40 px-3 py-2 text-xs text-[#1F2937] focus:border-[#FF7A00] focus:outline-none"
+            />
           </div>
 
           {actionMsg && <div className="mt-3 text-xs text-[#1F2937]">{actionMsg}</div>}
@@ -418,17 +588,79 @@ export function OperationsView({
 
         {/* Voice, Audio Devices & VAD Preferences */}
         <div className="rounded-lg border border-slate-200 bg-white p-5 text-xs">
-          <h2 className="font-display text-base font-semibold text-[#1F2937]">
-            Offline Voice, Audio Devices &amp; VAD Controls
-          </h2>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="font-display text-base font-semibold text-[#1F2937]">
+              Offline Voice, Audio Devices &amp; VAD Controls
+            </h2>
+            <div className="flex flex-wrap items-center gap-4">
+              <label className="flex items-center gap-2 text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={voiceConfig.continuousListening}
+                  onChange={(e) =>
+                    void onUpdateVoiceConfig({ continuousListening: e.target.checked })
+                  }
+                  className="accent-[#FF7A00]"
+                />
+                <span>Auto-Wake continuous listening</span>
+              </label>
+              <label className="flex items-center gap-2 text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={Boolean(voiceConfig.shortVoiceResponses)}
+                  onChange={(e) =>
+                    void onUpdateVoiceConfig({ shortVoiceResponses: e.target.checked })
+                  }
+                  className="accent-[#FF7A00]"
+                />
+                <span>Short spoken replies</span>
+              </label>
+            </div>
+          </div>
+
+          {!hindiVoiceAvailable && (
+            <div className="mt-3 rounded border border-amber-200 bg-amber-50/70 px-3 py-2 text-[11px] text-amber-950">
+              Hindi (hi-IN) TTS voice pack not detected in this browser. Install Windows Hindi Speech pack (or use Piper on Windows) for native Hindi pronunciation; English and Hinglish replies speak via the selected output voice.
+            </div>
+          )}
+
           <div className="mt-4 grid gap-4 sm:grid-cols-3">
             <div>
-              <label className="block font-medium text-slate-600">Wake Word</label>
+              <label className="block font-medium text-slate-600">Primary Wake Word</label>
               <input
                 value={voiceConfig.wakeWord}
                 onChange={(e) => void onUpdateVoiceConfig({ wakeWord: e.target.value })}
                 className="mt-1 w-full rounded-md border border-slate-200 px-3 py-1.5"
               />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="block font-medium text-slate-600">
+                Accepted Wake Phrases (comma-separated)
+              </label>
+              <div className="mt-1 flex gap-2">
+                <input
+                  value={wakePhrasesDraft}
+                  onChange={(e) => setWakePhrasesDraft(e.target.value)}
+                  placeholder="Hey Jarvis, Jarvis, Hello Jarvis"
+                  className="flex-1 rounded-md border border-slate-200 px-3 py-1.5"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const phrases = wakePhrasesDraft
+                      .split(',')
+                      .map((p) => p.trim())
+                      .filter(Boolean);
+                    if (phrases.length > 0) {
+                      void onUpdateVoiceConfig({ wakePhrases: phrases });
+                      setActionMsg(`Saved ${phrases.length} wake phrase(s).`);
+                    }
+                  }}
+                  className="rounded-md border border-slate-200 px-3 py-1.5 font-medium text-[#1F2937] hover:bg-slate-50"
+                >
+                  Apply Phrases
+                </button>
+              </div>
             </div>
             <div>
               <label className="block font-medium text-slate-600">
@@ -466,6 +698,23 @@ export function OperationsView({
             </div>
             <div>
               <label className="block font-medium text-slate-600">
+                Speech Synthesis Voice
+              </label>
+              <select
+                value={voiceConfig.voiceName || 'default'}
+                onChange={(e) => void onUpdateVoiceConfig({ voiceName: e.target.value })}
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5"
+              >
+                <option value="default">Auto-match Language Voice</option>
+                {voiceVoices.map((v) => (
+                  <option key={`${v.name}-${v.lang}`} value={v.name}>
+                    {v.name} ({v.lang})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block font-medium text-slate-600">
                 Speech Speed ({voiceConfig.speechRate}x)
               </label>
               <input
@@ -476,6 +725,38 @@ export function OperationsView({
                 value={voiceConfig.speechRate}
                 onChange={(e) =>
                   void onUpdateVoiceConfig({ speechRate: Number(e.target.value) })
+                }
+                className="mt-2 w-full accent-[#FF7A00]"
+              />
+            </div>
+            <div>
+              <label className="block font-medium text-slate-600">
+                Speech Pitch ({(voiceConfig.speechPitch ?? 1.0).toFixed(1)})
+              </label>
+              <input
+                type="range"
+                min="0.5"
+                max="2.0"
+                step="0.1"
+                value={voiceConfig.speechPitch ?? 1.0}
+                onChange={(e) =>
+                  void onUpdateVoiceConfig({ speechPitch: Number(e.target.value) })
+                }
+                className="mt-2 w-full accent-[#FF7A00]"
+              />
+            </div>
+            <div>
+              <label className="block font-medium text-slate-600">
+                Speech Volume ({Math.round((voiceConfig.speechVolume ?? 1.0) * 100)}%)
+              </label>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                value={voiceConfig.speechVolume ?? 1.0}
+                onChange={(e) =>
+                  void onUpdateVoiceConfig({ speechVolume: Number(e.target.value) })
                 }
                 className="mt-2 w-full accent-[#FF7A00]"
               />
@@ -496,7 +777,7 @@ export function OperationsView({
                 className="mt-2 w-full accent-[#FF7A00]"
               />
             </div>
-            <div className="flex items-end">
+            <div className="flex items-end sm:col-span-2">
               <label className="flex items-center gap-2 text-slate-700">
                 <input
                   type="checkbox"
@@ -524,12 +805,16 @@ export function OperationsView({
             <button
               type="button"
               onClick={async () => {
-                const probe = await jarvisApi.runDesktopAction({ action: 'windows_diagnostics' });
-                setActionMsg(
-                  probe?.output?.available || probe?.available
-                    ? `Desktop probe: ${JSON.stringify(probe.output || probe)}`
-                    : probe?.output?.unavailableReason || probe?.unavailableReason || 'Probe unavailable on current OS'
-                );
+                try {
+                  const probe = await jarvisApi.runDesktopAction({ action: 'windows_diagnostics' });
+                  setActionMsg(
+                    probe?.output?.available || probe?.available
+                      ? `Desktop probe: ${JSON.stringify(probe.output || probe)}`
+                      : probe?.output?.unavailableReason || probe?.unavailableReason || 'Probe unavailable on current OS'
+                  );
+                } catch (err) {
+                  setActionMsg(err instanceof Error ? err.message : 'Desktop probe failed');
+                }
               }}
               className="rounded border border-slate-200 px-3 py-1.5 font-medium text-[#1F2937] hover:bg-slate-50 whitespace-nowrap"
             >
@@ -554,9 +839,13 @@ export function OperationsView({
                   type="checkbox"
                   checked={Boolean(autostart?.enabled)}
                   onChange={async (e) => {
-                    const res = await jarvisApi.setAutostart(e.target.checked);
-                    setAutostart({ ...autostart, enabled: res.enabled });
-                    setActionMsg(res.message);
+                    try {
+                      const res = await jarvisApi.setAutostart(e.target.checked);
+                      setAutostart({ ...autostart, enabled: res.enabled });
+                      setActionMsg(res.message);
+                    } catch (err) {
+                      setActionMsg(err instanceof Error ? err.message : 'Unable to update autostart');
+                    }
                   }}
                   className="accent-[#FF7A00]"
                 />

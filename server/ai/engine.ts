@@ -26,6 +26,9 @@ export interface AIInferenceResult {
 export type DetectedIntent =
   | 'conversation'
   | 'diagnostics'
+  | 'memory'
+  | 'computer_control'
+  | 'file_ops'
   | 'task'
   | 'research'
   | 'coding'
@@ -60,6 +63,7 @@ export interface SavedAISettings {
   allowCloudFallback: boolean;
   ollamaUrl: string;
   llamacppUrl: string;
+  systemPrompt?: string;
 }
 
 export function getSavedAISettings(): SavedAISettings {
@@ -74,6 +78,7 @@ export function getSavedAISettings(): SavedAISettings {
     allowCloudFallback: false,
     ollamaUrl: config.ollamaBaseUrl,
     llamacppUrl: config.llamacppBaseUrl,
+    systemPrompt: '',
   };
   if (!row) return defaults;
   try {
@@ -116,6 +121,7 @@ export function saveAISettings(patch: Partial<SavedAISettings>): SavedAISettings
     inferenceMode: next.inferenceMode,
     preferredProvider: next.preferredProvider,
     preferredModel: next.preferredModel,
+    customPromptSet: Boolean(next.systemPrompt?.trim()),
   });
   return next;
 }
@@ -426,9 +432,48 @@ export function detectIntentAndLanguage(input: string): {
     lower.includes('disk') ||
     lower.includes('laptop') ||
     lower.includes('system health') ||
+    lower.includes('system resource') ||
     lower.includes('process')
   ) {
     return { intent: 'diagnostics', language };
+  }
+  if (
+    lower.includes('remember that') ||
+    lower.includes('remember this') ||
+    lower.includes('remember my') ||
+    lower.includes('yaad rakhna') ||
+    lower.includes('forget that') ||
+    lower.includes('forget about') ||
+    lower.includes('forget my') ||
+    lower.includes('bhool jao') ||
+    lower.includes('what did i tell you') ||
+    lower.includes('do you remember') ||
+    lower.includes('kya bataya tha')
+  ) {
+    return { intent: 'memory', language };
+  }
+  if (
+    /\b(open|launch|close)\s+(chrome|notepad|calculator|calc|explorer|vscode|terminal|edge|https?:\/\/)/i.test(
+      lower
+    ) ||
+    /\b(chrome|notepad|calculator|explorer|vscode|terminal|edge)\s+(kholo|khol|band karo|open)/i.test(
+      lower
+    ) ||
+    lower.includes('capture screenshot') ||
+    lower.includes('take a screenshot') ||
+    lower.includes('active window')
+  ) {
+    return { intent: 'computer_control', language };
+  }
+  if (
+    lower.includes('organize') ||
+    lower.includes('move file') ||
+    lower.includes('copy file') ||
+    lower.includes('delete file') ||
+    lower.includes('search files') ||
+    lower.includes('downloads folder')
+  ) {
+    return { intent: 'file_ops', language };
   }
   if (
     lower.includes('bug') ||
@@ -452,7 +497,9 @@ export function detectIntentAndLanguage(input: string): {
     lower.includes('research') ||
     lower.includes('search') ||
     lower.includes('compare') ||
-    lower.includes('investigate')
+    lower.includes('investigate') ||
+    lower.includes('weather') ||
+    lower.includes('mausam')
   ) {
     return { intent: 'research', language };
   }
@@ -589,55 +636,79 @@ export async function runAIInference(
     }, effectiveTimeoutMs);
 
     try {
+      const invokeOllamaChat = async (): Promise<AIInferenceResult> => {
+        const res = await fetch(`${status.ollamaUrl}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: requestController.signal,
+          body: JSON.stringify({
+            model: status.activeModel,
+            messages,
+            stream: false,
+            keep_alive: '5m',
+            options: {
+              temperature: options?.temperature ?? 0.35,
+              num_predict: options?.maxTokens ?? 512,
+              num_ctx: 2048,
+              num_batch: 256,
+            },
+          }),
+        });
+        if (!res.ok) {
+          const bodyTxt = await res.text().catch(() => '');
+          const httpErr = new Error(
+            `Ollama returned HTTP ${res.status}${bodyTxt ? `: ${bodyTxt.slice(0, 180)}` : ''}`
+          ) as Error & { statusCode?: number };
+          httpErr.statusCode = res.status;
+          throw httpErr;
+        }
+        const data = (await res.json()) as {
+          message?: { content?: string };
+          done?: boolean;
+          eval_count?: number;
+          prompt_eval_count?: number;
+          error?: string;
+        };
+        if (data.error) {
+          throw new Error(`Ollama error: ${data.error}`);
+        }
+        return {
+          text: data.message?.content || '',
+          provider: 'ollama',
+          model: status.activeModel,
+          inferenceMode: status.inferenceMode,
+          available: true,
+          durationMs: Date.now() - start,
+          evalCount: data.eval_count,
+          promptEvalCount: data.prompt_eval_count,
+        };
+      };
+
+      const isTransientRetryableError = (err: unknown): boolean => {
+        if (abortCause !== null || options?.signal?.aborted) return false;
+        const remainingMs = effectiveTimeoutMs - (Date.now() - start);
+        if (remainingMs < 5000) return false;
+        const statusCode = (err as { statusCode?: number })?.statusCode;
+        return statusCode === 502 || statusCode === 503 || statusCode === 429;
+      };
+
       await enforceLocalMemoryBudget(status.activeModel, status);
 
       if (abortCause === 'user' || options?.signal?.aborted) {
         throw new DOMException('Request cancelled by user', 'AbortError');
       }
 
-      const res = await fetch(`${status.ollamaUrl}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: requestController.signal,
-        body: JSON.stringify({
-          model: status.activeModel,
-          messages,
-          stream: false,
-          keep_alive: '5m',
-          options: {
-            temperature: options?.temperature ?? 0.35,
-            num_predict: options?.maxTokens ?? 512,
-            num_ctx: 2048,
-            num_batch: 256,
-          },
-        }),
-      });
-      if (!res.ok) {
-        const bodyTxt = await res.text().catch(() => '');
-        throw new Error(
-          `Ollama returned HTTP ${res.status}${bodyTxt ? `: ${bodyTxt.slice(0, 180)}` : ''}`
-        );
+      try {
+        return await invokeOllamaChat();
+      } catch (firstErr) {
+        if (isTransientRetryableError(firstErr)) {
+          await new Promise((r) => setTimeout(r, 350));
+          if (abortCause === null && !options?.signal?.aborted) {
+            return await invokeOllamaChat();
+          }
+        }
+        throw firstErr;
       }
-      const data = (await res.json()) as {
-        message?: { content?: string };
-        done?: boolean;
-        eval_count?: number;
-        prompt_eval_count?: number;
-        error?: string;
-      };
-      if (data.error) {
-        throw new Error(`Ollama error: ${data.error}`);
-      }
-      return {
-        text: data.message?.content || '',
-        provider: 'ollama',
-        model: status.activeModel,
-        inferenceMode: status.inferenceMode,
-        available: true,
-        durationMs: Date.now() - start,
-        evalCount: data.eval_count,
-        promptEvalCount: data.prompt_eval_count,
-      };
     } catch (err) {
       let errorType: AIInferenceResult['errorType'] = 'connection';
       let msg = 'Ollama inference failed';
@@ -780,5 +851,32 @@ export async function runAIInference(
     available: false,
     error: 'No active AI provider',
     durationMs: Date.now() - start,
+  };
+}
+
+export async function testAIInference(): Promise<{
+  ok: boolean;
+  provider: string;
+  model: string | null;
+  inferenceMode: InferenceMode;
+  reply: string;
+  latencyMs: number;
+  error?: string;
+}> {
+  const result = await runAIInference(
+    [
+      { role: 'system', content: 'You are JARVIS. Reply in one concise sentence confirming model readiness.' },
+      { role: 'user', content: 'Respond with: JARVIS inference check OK.' },
+    ],
+    { maxTokens: 64, temperature: 0.1 }
+  );
+  return {
+    ok: result.available && result.text.trim().length > 0,
+    provider: result.provider,
+    model: result.model,
+    inferenceMode: result.inferenceMode,
+    reply: result.text.trim(),
+    latencyMs: result.durationMs,
+    error: result.error,
   };
 }

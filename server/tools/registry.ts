@@ -15,12 +15,20 @@ import {
 } from '../engineering/engineerService.js';
 import { eventBus } from '../events/eventBus.js';
 import {
+  copyWorkspaceFile,
+  deleteWorkspaceFile,
+  moveWorkspaceFile,
+  organizeWorkspaceDirectory,
   readAndParseWorkspaceFile,
   searchWorkspaceFiles,
   writeWorkspaceFileWithCheckpoint,
 } from '../files/fileService.js';
 import { logAudit } from '../logging/logger.js';
-import { searchMemories, storeMemory } from '../memory/memoryService.js';
+import {
+  forgetMemoriesByQuery,
+  searchMemories,
+  storeMemory,
+} from '../memory/memoryService.js';
 import { collectSystemTelemetry } from '../monitoring/systemMonitor.js';
 import { redactSecrets, validateSafeCommand } from '../security/guard.js';
 import type { ApprovalRequest, RiskLevel, ToolDefinitionMeta } from '../types.js';
@@ -105,6 +113,67 @@ export function initializeToolRegistry(): void {
     schema: z.object({ path: z.string().min(1), content: z.string() }),
     execute: async (input, ctx) =>
       writeWorkspaceFileWithCheckpoint(input.path, input.content, ctx.taskId),
+  });
+
+  registerTool({
+    meta: {
+      id: 'file_copy',
+      name: 'Workspace File Copier',
+      description: 'Copy a file safely inside the authorized workspace directory.',
+      category: 'files',
+      riskLevel: 'LOW',
+      timeoutMs: 8000,
+      requiresApproval: false,
+      available: true,
+    },
+    schema: z.object({ from: z.string().min(1), to: z.string().min(1) }),
+    execute: async (input) => copyWorkspaceFile(input.from, input.to),
+  });
+
+  registerTool({
+    meta: {
+      id: 'file_move',
+      name: 'Checkpointed File Mover',
+      description: 'Move or rename a file safely inside the authorized workspace after creating a checkpoint.',
+      category: 'files',
+      riskLevel: 'MEDIUM',
+      timeoutMs: 8000,
+      requiresApproval: false,
+      available: true,
+    },
+    schema: z.object({ from: z.string().min(1), to: z.string().min(1) }),
+    execute: async (input, ctx) => moveWorkspaceFile(input.from, input.to, ctx.taskId),
+  });
+
+  registerTool({
+    meta: {
+      id: 'file_delete',
+      name: 'Checkpointed File Deleter',
+      description: 'Delete a workspace file safely with rollback checkpoint (requires owner approval).',
+      category: 'files',
+      riskLevel: 'HIGH',
+      timeoutMs: 8000,
+      requiresApproval: true,
+      available: true,
+    },
+    schema: z.object({ path: z.string().min(1) }),
+    execute: async (input, ctx) => deleteWorkspaceFile(input.path, ctx.taskId),
+  });
+
+  registerTool({
+    meta: {
+      id: 'file_organize',
+      name: 'Checkpointed Folder Organizer',
+      description: 'Organize loose files inside a workspace subfolder into categorized subfolders with checkpointing.',
+      category: 'files',
+      riskLevel: 'HIGH',
+      timeoutMs: 12_000,
+      requiresApproval: true,
+      available: true,
+    },
+    schema: z.object({ subDir: z.string().min(1), dryRun: z.boolean().optional() }),
+    execute: async (input, ctx) =>
+      organizeWorkspaceDirectory(input.subDir, { dryRun: input.dryRun, taskId: ctx.taskId }),
   });
 
   registerTool({
@@ -273,6 +342,21 @@ export function initializeToolRegistry(): void {
 
   registerTool({
     meta: {
+      id: 'memory_forget',
+      name: 'Memory Forget',
+      description: 'Forget matching memories from the persistent memory brain.',
+      category: 'memory',
+      riskLevel: 'MEDIUM',
+      timeoutMs: 5000,
+      requiresApproval: false,
+      available: true,
+    },
+    schema: z.object({ query: z.string().min(1) }),
+    execute: async (input) => forgetMemoriesByQuery(input.query),
+  });
+
+  registerTool({
+    meta: {
       id: 'multi_file_edit',
       name: 'Atomic Multi-File Editor',
       description: 'Apply multi-file workspace edits with unified diff, checkpointing, typecheck verification, and automatic rollback on failure.',
@@ -335,6 +419,10 @@ export function initializeToolRegistry(): void {
         'focus_window',
         'launch_app',
         'close_app',
+        'open_url',
+        'type_text',
+        'scroll',
+        'click_at',
         'get_clipboard',
         'set_clipboard',
         'capture_screenshot',
@@ -342,6 +430,9 @@ export function initializeToolRegistry(): void {
       ]),
       target: z.string().optional(),
       text: z.string().optional(),
+      x: z.number().optional(),
+      y: z.number().optional(),
+      delta: z.number().optional(),
     }),
     execute: async (input) => executeDesktopAction(input),
   });

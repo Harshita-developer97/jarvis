@@ -58,6 +58,10 @@ export async function getDesktopCapabilities(): Promise<{
           'focus_window',
           'launch_app',
           'close_app',
+          'open_url',
+          'type_text',
+          'scroll',
+          'click_at',
           'get_clipboard',
           'set_clipboard',
           'capture_screenshot',
@@ -80,12 +84,19 @@ export async function executeDesktopAction(input: {
     | 'focus_window'
     | 'launch_app'
     | 'close_app'
+    | 'open_url'
+    | 'type_text'
+    | 'scroll'
+    | 'click_at'
     | 'get_clipboard'
     | 'set_clipboard'
     | 'capture_screenshot'
     | 'windows_diagnostics';
   target?: string;
   text?: string;
+  x?: number;
+  y?: number;
+  delta?: number;
 }): Promise<DesktopActionResult> {
   if (input.action === 'check_capabilities') {
     const caps = await getDesktopCapabilities();
@@ -216,6 +227,90 @@ $sb.ToString()`;
           action: input.action,
           verified: true,
           data: { closed: procName },
+        };
+      }
+
+      case 'open_url': {
+        const rawUrl = (input.target || '').trim();
+        let parsedUrl: URL;
+        try {
+          parsedUrl = new URL(rawUrl);
+        } catch {
+          throw new Error('Valid http:// or https:// URL required');
+        }
+        if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+          throw new Error(`Unsupported URL protocol: ${parsedUrl.protocol}`);
+        }
+        await runPowerShell('Start-Process $env:JARVIS_URL', { JARVIS_URL: parsedUrl.toString() });
+        logAudit('security', 'computer_control', 'url_opened', { url: parsedUrl.toString() });
+        return {
+          available: true,
+          platform: 'win32',
+          action: input.action,
+          verified: true,
+          data: { openedUrl: parsedUrl.toString() },
+        };
+      }
+
+      case 'type_text': {
+        const txt = input.text || '';
+        if (!txt) throw new Error('Text required for type_text');
+        await runPowerShell(
+          'Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait($env:JARVIS_TYPE_TEXT)',
+          { JARVIS_TYPE_TEXT: txt.slice(0, 500) }
+        );
+        return {
+          available: true,
+          platform: 'win32',
+          action: input.action,
+          verified: true,
+          data: { typedLength: Math.min(500, txt.length) },
+        };
+      }
+
+      case 'scroll': {
+        const delta = Math.max(-1200, Math.min(1200, Math.round(input.delta ?? -240)));
+        const script = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class WinMouse {
+  [DllImport("user32.dll")] public static extern void mouse_event(int dwFlags, int dx, int dy, int cButtons, int dwExtraInfo);
+}
+"@
+[WinMouse]::mouse_event(0x0800, 0, 0, ${delta}, 0)`;
+        await runPowerShell(script);
+        return {
+          available: true,
+          platform: 'win32',
+          action: input.action,
+          verified: true,
+          data: { delta },
+        };
+      }
+
+      case 'click_at': {
+        const x = Math.max(0, Math.round(input.x ?? 0));
+        const y = Math.max(0, Math.round(input.y ?? 0));
+        const script = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class WinClick {
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
+  [DllImport("user32.dll")] public static extern void mouse_event(int dwFlags, int dx, int dy, int cButtons, int dwExtraInfo);
+}
+"@
+[void][WinClick]::SetCursorPos(${x}, ${y})
+[WinClick]::mouse_event(0x0002, 0, 0, 0, 0)
+[WinClick]::mouse_event(0x0004, 0, 0, 0, 0)`;
+        await runPowerShell(script);
+        return {
+          available: true,
+          platform: 'win32',
+          action: input.action,
+          verified: true,
+          data: { x, y },
         };
       }
 

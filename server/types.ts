@@ -132,6 +132,18 @@ export interface AIEngineStatus {
   setupInstructions: string[];
 }
 
+export type VoiceLifecycleState =
+  | 'disabled'
+  | 'initializing'
+  | 'wake_listening'
+  | 'wake_detected'
+  | 'recording_command'
+  | 'processing'
+  | 'speaking'
+  | 'interrupted'
+  | 'recovering'
+  | 'error';
+
 export interface VoiceDeviceInfo {
   id: string;
   name: string;

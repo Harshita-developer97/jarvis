@@ -20,6 +20,7 @@ export const jarvisApi = {
   getAIStatus: () => requestJson<any>('/api/ai/status'),
   saveAISettings: (body: Record<string, unknown>) =>
     requestJson<any>('/api/ai/settings', { method: 'POST', body: JSON.stringify(body) }),
+  testAI: () => requestJson<any>('/api/ai/test', { method: 'POST' }),
   loadModel: (modelName: string) =>
     requestJson<any>('/api/ai/models/load', { method: 'POST', body: JSON.stringify({ modelName }) }),
   unloadModel: (modelName: string) =>
@@ -57,6 +58,8 @@ export const jarvisApi = {
   },
   createMemory: (body: Record<string, unknown>) =>
     requestJson<any>('/api/memory', { method: 'POST', body: JSON.stringify(body) }),
+  forgetMemory: (query: string) =>
+    requestJson<any>('/api/memory/forget', { method: 'POST', body: JSON.stringify({ query }) }),
   deleteMemory: (id: string) => requestJson<any>(`/api/memory/${id}`, { method: 'DELETE' }),
 
   listTasks: () => requestJson<{ tasks: any[] }>('/api/tasks'),
@@ -79,6 +82,20 @@ export const jarvisApi = {
   readFile: (path: string) => requestJson<any>(`/api/files/read?path=${encodeURIComponent(path)}`),
   writeFile: (path: string, content: string) =>
     requestJson<any>('/api/files/write', { method: 'POST', body: JSON.stringify({ path, content }) }),
+  moveFile: (from: string, to: string) =>
+    requestJson<any>('/api/files/move', { method: 'POST', body: JSON.stringify({ from, to }) }),
+  copyFile: (from: string, to: string) =>
+    requestJson<any>('/api/files/copy', { method: 'POST', body: JSON.stringify({ from, to }) }),
+  deleteFile: (path: string, approvedByOwner = false) =>
+    requestJson<any>('/api/files/delete', {
+      method: 'POST',
+      body: JSON.stringify({ path, approvedByOwner }),
+    }),
+  organizeFolder: (subDir: string, dryRun = false, approvedByOwner = false) =>
+    requestJson<any>('/api/files/organize', {
+      method: 'POST',
+      body: JSON.stringify({ subDir, dryRun, approvedByOwner }),
+    }),
   findDuplicateFiles: () => requestJson<{ duplicates: any[] }>('/api/files/duplicates'),
 
   inspectUrl: (url: string) =>
@@ -111,6 +128,15 @@ export const jarvisApi = {
   getBaseline: (suite = 'vitest') => requestJson<any>(`/api/engineering/baseline?suite=${encodeURIComponent(suite)}`),
   saveBaseline: (body: { suiteName: string; passed: number; failed: number }) =>
     requestJson<any>('/api/engineering/baseline', { method: 'POST', body: JSON.stringify(body) }),
+  repairLoop: (body?: {
+    label?: string;
+    suite?: 'typecheck' | 'vitest';
+    maxIterations?: number;
+  }) =>
+    requestJson<any>('/api/engineering/repair-loop', {
+      method: 'POST',
+      body: JSON.stringify(body || {}),
+    }),
 
   getDesktopCapabilities: () => requestJson<any>('/api/desktop/capabilities'),
   runDesktopAction: (body: {

@@ -26,10 +26,14 @@ import type {
 
 const DEFAULT_VOICE_CONFIG: VoiceConfig = {
   enabled: true,
-  wakeWord: 'JARVIS',
+  wakeWord: 'Hey Jarvis',
+  wakePhrases: ['Hey Jarvis', 'Jarvis', 'Hello Jarvis'],
   continuousListening: false,
   language: 'auto',
   speechRate: 1.0,
+  speechPitch: 1.0,
+  speechVolume: 1.0,
+  shortVoiceResponses: false,
   voiceName: 'default',
   inputDeviceId: 'default',
   outputDeviceId: 'default',
@@ -170,7 +174,14 @@ export default function App() {
     (spokenText) => {
       void handleSendMessage(spokenText, []);
     },
-    backendVoiceCaps
+    backendVoiceCaps,
+    {
+      isProcessing: sending,
+      onInterruptRequest: () => {
+        void jarvisApi.interruptChat().catch(() => {});
+        setSending(false);
+      },
+    }
   );
 
   useEffect(() => {
@@ -315,6 +326,7 @@ export default function App() {
               voiceState={voiceState}
               onSendMessage={handleSendMessage}
               onInterrupt={async () => {
+                voiceState.stopSpeaking();
                 await jarvisApi.interruptChat();
                 setSending(false);
               }}
@@ -357,6 +369,8 @@ export default function App() {
                 inputDevices: voiceState.inputDevices,
                 outputDevices: voiceState.outputDevices,
               }}
+              voiceVoices={voiceState.availableVoices}
+              hindiVoiceAvailable={voiceState.hindiVoiceAvailable}
               onUpdateVoiceConfig={handleUpdateVoiceConfig}
               onSwitchInferenceMode={handleSwitchInferenceMode}
               onRefreshAI={refreshCore}
