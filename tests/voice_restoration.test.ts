@@ -7,6 +7,7 @@ import {
   DEFAULT_WAKE_PHRASES,
   detectHindiVoiceAvailable,
   formatVoiceLifecycleLabel,
+  isEndConversationCommand,
   isStopSpeechCommand,
   matchWakePhrase,
   resolveSpeechLangTag,
@@ -80,12 +81,18 @@ describe('JARVIS Restoration — Voice Loop, Memory, File Ops, Repair Loop & Aut
     expect(unrelated.matched).toBe(false);
   });
 
-  it('detects spoken barge-in stop commands across English and Hinglish', () => {
+  it('detects spoken barge-in stop and end-conversation sleep commands across English and Hinglish', () => {
     expect(isStopSpeechCommand('Jarvis stop')).toBe(true);
     expect(isStopSpeechCommand('please stop speaking now')).toBe(true);
     expect(isStopSpeechCommand('bolna band karo')).toBe(true);
     expect(isStopSpeechCommand('ruk jao')).toBe(true);
     expect(isStopSpeechCommand('tell me about TypeScript generics')).toBe(false);
+
+    expect(isEndConversationCommand('bye jarvis')).toBe(true);
+    expect(isEndConversationCommand('go to sleep')).toBe(true);
+    expect(isEndConversationCommand('bas jarvis')).toBe(true);
+    expect(isEndConversationCommand('so jao')).toBe(true);
+    expect(isEndConversationCommand('continue the conversation please')).toBe(false);
   });
 
   it('sanitizes markdown, fenced code, JSON payloads, URLs, and internal telemetry tags for speech', () => {

@@ -103,6 +103,27 @@ export function isStopSpeechCommand(transcript: string): boolean {
 }
 
 /**
+ * Detects spoken commands meant to end the active follow-up conversation and return to wake-word standby.
+ */
+export function isEndConversationCommand(transcript: string): boolean {
+  const lower = transcript.trim().toLowerCase();
+  if (!lower) return false;
+  const patterns = [
+    /\bbye jarvis\b/,
+    /\bgoodbye jarvis\b/,
+    /\bgo to sleep\b/,
+    /\bsleep mode\b/,
+    /\bstop listening\b/,
+    /\bend conversation\b/,
+    /\bthat'?s all jarvis\b/,
+    /\bbas jarvis\b/,
+    /\bso jao\b/,
+    /^(bye|goodbye)$/i,
+  ];
+  return patterns.some((re) => re.test(lower));
+}
+
+/**
  * Cleans assistant text for natural TTS playback:
  * strips fenced code blocks, JSON payloads, internal telemetry tags, URLs, and markdown noise.
  */

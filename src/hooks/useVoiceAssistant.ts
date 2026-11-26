@@ -3,6 +3,7 @@ import { jarvisApi } from '../lib/api';
 import {
   DEFAULT_WAKE_PHRASES,
   detectHindiVoiceAvailable,
+  isEndConversationCommand,
   isStopSpeechCommand,
   isWithinQuietHours,
   matchWakePhrase,
@@ -11,6 +12,8 @@ import {
   splitIntoSpeechSentences,
 } from '../lib/voiceUtils';
 import type { LanguageMode, VoiceConfig, VoiceLifecycleState } from '../types/jarvis';
+
+const FOLLOW_UP_WINDOW_MS = 60_000;
 
 interface SpeechRecognitionInstance extends EventTarget {
   continuous: boolean;
@@ -52,6 +55,8 @@ export function useVoiceAssistant(
   const [micLevel, setMicLevel] = useState(0);
   const [voiceActive, setVoiceActive] = useState(false);
   const [interimText, setInterimText] = useState('');
+  const [voiceStatusHint, setVoiceStatusHint] = useState<string | null>(null);
+  const [followUpActive, setFollowUpActive] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [inputDevices, setInputDevices] = useState<AudioDeviceSummary[]>([]);
@@ -66,11 +71,14 @@ export function useVoiceAssistant(
   const rafRef = useRef<number | null>(null);
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sentenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const followUpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const listeningRef = useRef(false);
   const isSpeakingRef = useRef(false);
   const echoTailUntilRef = useRef<number>(0);
   const awaitingCommandUntilRef = useRef<number>(0);
+  const inConversationRef = useRef<boolean>(false);
+  const wasProcessingRef = useRef<boolean>(false);
   const speechDetectedAtRef = useRef<number | null>(null);
   const lastVoiceActivityRef = useRef<number>(0);
   const latestTranscriptRef = useRef<string>('');
@@ -96,12 +104,88 @@ export function useVoiceAssistant(
     voiceConfigRef.current = voiceConfig;
   }, [voiceConfig]);
 
+  const clearFollowUpTimer = useCallback(() => {
+    if (followUpTimerRef.current) {
+      clearTimeout(followUpTimerRef.current);
+      followUpTimerRef.current = null;
+    }
+  }, []);
+
+  const armFollowUpWindow = useCallback(
+    (durationMs = FOLLOW_UP_WINDOW_MS) => {
+      if (!listeningRef.current || !voiceConfigRef.current.continuousListening) return;
+      clearFollowUpTimer();
+      inConversationRef.current = true;
+      const deadline = Date.now() + durationMs;
+      awaitingCommandUntilRef.current = deadline;
+      setFollowUpActive(true);
+      setVoiceStatusHint(
+        `Conversation active (${Math.round(durationMs / 1000)}s) — speak directly without repeating "${voiceConfigRef.current.wakeWord || 'Jarvis'}".`
+      );
+      if (!isSpeakingRef.current && !isProcessingRef.current) {
+        setLifecycleState('recording_command');
+      }
+      followUpTimerRef.current = setTimeout(() => {
+        if (Date.now() < awaitingCommandUntilRef.current) {
+          const remaining = awaitingCommandUntilRef.current - Date.now();
+          if (remaining > 500) {
+            armFollowUpWindow(remaining);
+            return;
+          }
+        }
+        inConversationRef.current = false;
+        awaitingCommandUntilRef.current = 0;
+        setFollowUpActive(false);
+        setVoiceStatusHint(null);
+        if (listeningRef.current && !isSpeakingRef.current && !isProcessingRef.current) {
+          setLifecycleState(
+            voiceConfigRef.current.continuousListening ? 'wake_listening' : 'recording_command'
+          );
+        }
+      }, durationMs + 50);
+    },
+    [clearFollowUpTimer]
+  );
+
+  const sleepConversation = useCallback(() => {
+    clearFollowUpTimer();
+    inConversationRef.current = false;
+    awaitingCommandUntilRef.current = 0;
+    setFollowUpActive(false);
+    setInterimText('');
+    setVoiceStatusHint(
+      `Standby — say "${voiceConfigRef.current.wakeWord || 'Hey Jarvis'}" when you need me.`
+    );
+    if (listeningRef.current && !isSpeakingRef.current && !isProcessingRef.current) {
+      setLifecycleState(
+        voiceConfigRef.current.continuousListening ? 'wake_listening' : 'recording_command'
+      );
+    }
+  }, [clearFollowUpTimer]);
+
   useEffect(() => {
     const busy = Boolean(options?.isProcessing);
+    const wasBusy = wasProcessingRef.current;
+    wasProcessingRef.current = busy;
     isProcessingRef.current = busy;
+
     if (busy) {
       setLifecycleState('processing');
-    } else if (!isSpeakingRef.current && listeningRef.current) {
+      return;
+    }
+
+    if (wasBusy && !isSpeakingRef.current && listeningRef.current) {
+      if (voiceConfigRef.current.continuousListening && inConversationRef.current) {
+        armFollowUpWindow();
+      } else {
+        setLifecycleState(
+          voiceConfigRef.current.continuousListening ? 'wake_listening' : 'recording_command'
+        );
+      }
+      return;
+    }
+
+    if (!isSpeakingRef.current && listeningRef.current) {
       setLifecycleState(
         voiceConfigRef.current.continuousListening
           ? awaitingCommandUntilRef.current > Date.now()
@@ -112,7 +196,7 @@ export function useVoiceAssistant(
     } else if (!isSpeakingRef.current && !listeningRef.current) {
       setLifecycleState((prev) => (prev === 'error' ? 'error' : 'disabled'));
     }
-  }, [options?.isProcessing]);
+  }, [options?.isProcessing, armFollowUpWindow]);
 
   const SpeechRecognitionCtor =
     typeof window !== 'undefined'
@@ -208,45 +292,56 @@ export function useVoiceAssistant(
     setMicLevel(0);
   }, []);
 
-  const stopSpeaking = useCallback((markInterrupted = false) => {
-    utteranceGenerationRef.current += 1;
-    if (sentenceTimerRef.current) {
-      clearTimeout(sentenceTimerRef.current);
-      sentenceTimerRef.current = null;
-    }
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
-    if (audioElementRef.current) {
-      audioElementRef.current.pause();
-      audioElementRef.current.currentTime = 0;
-      audioElementRef.current = null;
-    }
-    if (isSpeakingRef.current) {
-      echoTailUntilRef.current = Date.now() + 400;
-    }
-    isSpeakingRef.current = false;
-    setSpeaking(false);
+  const stopSpeaking = useCallback(
+    (markInterrupted = false) => {
+      utteranceGenerationRef.current += 1;
+      if (sentenceTimerRef.current) {
+        clearTimeout(sentenceTimerRef.current);
+        sentenceTimerRef.current = null;
+      }
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+      if (audioElementRef.current) {
+        audioElementRef.current.pause();
+        audioElementRef.current.currentTime = 0;
+        audioElementRef.current = null;
+      }
+      if (isSpeakingRef.current) {
+        echoTailUntilRef.current = Date.now() + 400;
+      }
+      isSpeakingRef.current = false;
+      setSpeaking(false);
 
-    if (markInterrupted) {
-      setLifecycleState('interrupted');
-      setTimeout(() => {
-        if (listeningRef.current) {
+      if (markInterrupted) {
+        setLifecycleState('interrupted');
+        setTimeout(() => {
+          if (listeningRef.current && !isProcessingRef.current) {
+            if (voiceConfigRef.current.continuousListening && inConversationRef.current) {
+              armFollowUpWindow();
+            } else {
+              setLifecycleState(
+                voiceConfigRef.current.continuousListening ? 'wake_listening' : 'recording_command'
+              );
+            }
+          } else if (!isProcessingRef.current) {
+            setLifecycleState('disabled');
+          }
+        }, 450);
+      } else if (listeningRef.current && !isProcessingRef.current) {
+        if (voiceConfigRef.current.continuousListening && inConversationRef.current) {
+          armFollowUpWindow();
+        } else {
           setLifecycleState(
             voiceConfigRef.current.continuousListening ? 'wake_listening' : 'recording_command'
           );
-        } else {
-          setLifecycleState('disabled');
         }
-      }, 450);
-    } else if (listeningRef.current && !isProcessingRef.current) {
-      setLifecycleState(
-        voiceConfigRef.current.continuousListening ? 'wake_listening' : 'recording_command'
-      );
-    } else if (!isProcessingRef.current) {
-      setLifecycleState('disabled');
-    }
-  }, []);
+      } else if (!isProcessingRef.current) {
+        setLifecycleState('disabled');
+      }
+    },
+    [armFollowUpWindow]
+  );
 
   const speak = useCallback(
     async (text: string, langOverride?: LanguageMode) => {
@@ -269,9 +364,13 @@ export function useVoiceAssistant(
         echoTailUntilRef.current = Date.now() + 420;
         if (!isProcessingRef.current) {
           if (listeningRef.current) {
-            setLifecycleState(
-              voiceConfigRef.current.continuousListening ? 'wake_listening' : 'recording_command'
-            );
+            if (voiceConfigRef.current.continuousListening && inConversationRef.current) {
+              armFollowUpWindow();
+            } else {
+              setLifecycleState(
+                voiceConfigRef.current.continuousListening ? 'wake_listening' : 'recording_command'
+              );
+            }
           } else {
             setLifecycleState('disabled');
           }
@@ -395,26 +494,35 @@ export function useVoiceAssistant(
 
       speakChunkAt(0);
     },
-    [backendCaps, availableVoices, stopSpeaking]
+    [backendCaps, availableVoices, stopSpeaking, armFollowUpWindow]
   );
 
-  const emitCommandSafe = useCallback((commandText: string) => {
-    const clean = commandText.trim();
-    if (!clean) return;
-    const now = Date.now();
-    if (
-      lastDispatchedRef.current.text.toLowerCase() === clean.toLowerCase() &&
-      now - lastDispatchedRef.current.at < 2200
-    ) {
-      return;
-    }
-    lastDispatchedRef.current = { text: clean, at: now };
-    awaitingCommandUntilRef.current = 0;
-    dispatchedInSessionRef.current = true;
-    setInterimText('');
-    setLifecycleState('processing');
-    onTranscriptRef.current(clean);
-  }, []);
+  const emitCommandSafe = useCallback(
+    (commandText: string, keepConversationAlive = false) => {
+      const clean = commandText.trim();
+      if (!clean) return;
+      const now = Date.now();
+      if (
+        lastDispatchedRef.current.text.toLowerCase() === clean.toLowerCase() &&
+        now - lastDispatchedRef.current.at < 2200
+      ) {
+        return;
+      }
+      lastDispatchedRef.current = { text: clean, at: now };
+      clearFollowUpTimer();
+      awaitingCommandUntilRef.current = 0;
+      setFollowUpActive(false);
+      if (keepConversationAlive) {
+        inConversationRef.current = true;
+      }
+      dispatchedInSessionRef.current = true;
+      setInterimText('');
+      setVoiceStatusHint(null);
+      setLifecycleState('processing');
+      onTranscriptRef.current(clean);
+    },
+    [clearFollowUpTimer]
+  );
 
   const dispatchFinalTranscript = useCallback(
     (rawText: string, continuousMode?: boolean) => {
@@ -437,19 +545,25 @@ export function useVoiceAssistant(
       }
 
       if (isContinuous) {
-        // Two-step wake window active: accept spoken command directly without repeating wake word
-        if (awaitingCommandUntilRef.current > Date.now()) {
+        const followUpOpen =
+          inConversationRef.current || awaitingCommandUntilRef.current > Date.now();
+
+        if (followUpOpen) {
+          if (isEndConversationCommand(text)) {
+            sleepConversation();
+            return;
+          }
+
           const wakeOnly = matchWakePhrase(
             text,
             cfg.wakeWord || 'Hey Jarvis',
             cfg.wakePhrases || DEFAULT_WAKE_PHRASES
           );
           if (wakeOnly.matched && !wakeOnly.hasCommand) {
-            // Re-extend listening window cleanly
-            awaitingCommandUntilRef.current = Date.now() + 12_000;
+            armFollowUpWindow();
             return;
           }
-          emitCommandSafe(wakeOnly.matched ? wakeOnly.command : text);
+          emitCommandSafe(wakeOnly.matched ? wakeOnly.command : text, true);
           return;
         }
 
@@ -460,32 +574,27 @@ export function useVoiceAssistant(
         );
         if (wakeCheck.matched) {
           if (wakeCheck.hasCommand) {
-            emitCommandSafe(wakeCheck.command);
+            emitCommandSafe(wakeCheck.command, true);
           } else {
-            // Wake word detected alone ("Hey Jarvis") -> enter recording_command window
-            awaitingCommandUntilRef.current = Date.now() + 12_000;
+            // Wake word detected alone ("Hey Jarvis") -> enter active conversation window
+            inConversationRef.current = true;
             setLifecycleState('wake_detected');
-            setInterimText('Wake phrase detected — listening for your command...');
+            armFollowUpWindow();
             if (cfg.enabled) {
               const promptPhrase = cfg.language === 'hi' ? 'जी, बोलिए।' : 'Yes, listening.';
               void speak(promptPhrase, cfg.language);
             }
-            setTimeout(() => {
-              if (listeningRef.current && awaitingCommandUntilRef.current > Date.now() && !isSpeakingRef.current) {
-                setLifecycleState('recording_command');
-              }
-            }, 600);
           }
         } else {
-          setInterimText(
-            `Heard "${text}" — say "${cfg.wakeWord || 'Hey Jarvis'}" first to activate`
+          setVoiceStatusHint(
+            `Heard "${text}" — say "${cfg.wakeWord || 'Hey Jarvis'}" once to start conversation.`
           );
         }
       } else {
-        emitCommandSafe(text);
+        emitCommandSafe(text, false);
       }
     },
-    [emitCommandSafe, speak, stopSpeaking]
+    [emitCommandSafe, speak, stopSpeaking, armFollowUpWindow, sleepConversation]
   );
 
   const stopListening = useCallback(() => {
@@ -493,8 +602,12 @@ export function useVoiceAssistant(
       clearTimeout(restartTimerRef.current);
       restartTimerRef.current = null;
     }
+    clearFollowUpTimer();
     listeningRef.current = false;
+    inConversationRef.current = false;
     awaitingCommandUntilRef.current = 0;
+    setFollowUpActive(false);
+    setVoiceStatusHint(null);
     setListening(false);
     try {
       recognitionRef.current?.stop();
@@ -518,7 +631,7 @@ export function useVoiceAssistant(
     if (!isSpeakingRef.current && !isProcessingRef.current) {
       setLifecycleState('disabled');
     }
-  }, [dispatchFinalTranscript, stopAudioMeter]);
+  }, [clearFollowUpTimer, dispatchFinalTranscript, stopAudioMeter]);
 
   const startAudioMeter = useCallback(
     async (withWhisperRecorder = false) => {
@@ -702,6 +815,12 @@ export function useVoiceAssistant(
             return;
           }
           if (!isSpeakingRef.current && Date.now() >= echoTailUntilRef.current) {
+            if (isContinuous && awaitingCommandUntilRef.current > Date.now()) {
+              awaitingCommandUntilRef.current = Math.max(
+                awaitingCommandUntilRef.current,
+                Date.now() + 20_000
+              );
+            }
             latestTranscriptRef.current = cleanInterim;
             setInterimText(cleanInterim);
           }
@@ -826,13 +945,13 @@ export function useVoiceAssistant(
           if (status.state === 'granted' && voiceConfigRef.current.continuousListening) {
             void startListening(true);
           } else {
-            setInterimText(
+            setVoiceStatusHint(
               `Auto-Wake enabled (${voiceConfigRef.current.wakeWord}) — click "Start Wake Listener" once to arm browser microphone.`
             );
           }
         })
         .catch(() => {
-          setInterimText(
+          setVoiceStatusHint(
             `Auto-Wake enabled (${voiceConfigRef.current.wakeWord}) — click "Start Wake Listener" once to arm browser microphone.`
           );
         });
@@ -843,6 +962,7 @@ export function useVoiceAssistant(
     return () => {
       if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
       if (sentenceTimerRef.current) clearTimeout(sentenceTimerRef.current);
+      clearFollowUpTimer();
       listeningRef.current = false;
       try {
         recognitionRef.current?.abort();
@@ -852,7 +972,7 @@ export function useVoiceAssistant(
       stopAudioMeter();
       stopSpeaking(false);
     };
-  }, [stopAudioMeter, stopSpeaking]);
+  }, [clearFollowUpTimer, stopAudioMeter, stopSpeaking]);
 
   return {
     lifecycleState,
@@ -861,9 +981,11 @@ export function useVoiceAssistant(
     hindiVoiceAvailable,
     listening,
     speaking,
+    followUpActive,
     micLevel,
     voiceActive,
     interimText,
+    voiceStatusHint,
     voiceError,
     availableVoices,
     inputDevices,
@@ -871,6 +993,7 @@ export function useVoiceAssistant(
     refreshDevices,
     startListening,
     stopListening,
+    sleepConversation,
     speak,
     stopSpeaking: () => stopSpeaking(true),
   };
